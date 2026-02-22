@@ -46,6 +46,7 @@ node_modules/
 !package.json
 !package-lock.json
 !tsconfig.json
+!data/characters/character.json
 service-account.json
 credentials.json
 gcp-key.json
@@ -84,7 +85,8 @@ htmlcov/
 Thumbs.db
 
 # Data & Generated files
-data/
+# Keep character config in repo, ignore generated images and other runtime data
+data/images/
 *.db
 *.sqlite
 *.sqlite3
