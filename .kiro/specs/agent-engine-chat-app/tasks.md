@@ -4,15 +4,15 @@
 - **(P)**: 同レベルの前タスクと並列実行可能
 - **前提**: タスクグループ開始に必要な先行タスク
 
-- [ ] 0. GCPインフラのセットアップ（実装開始前に完了必須）
+- [x] 0. GCPインフラのセットアップ（実装開始前に完了必須）
 
-- [ ] 0.1 必要なAPIの有効化と認証設定
+- [x] 0.1 必要なAPIの有効化と認証設定
   - 必要なGCP APIの有効化（Vertex AI API、Cloud Firestore API）
   - ADC（Application Default Credentials）でのローカル認証確認（`gcloud auth application-default login`）
   - ローカル実行のためService Account Keyは不要（ADCで完結）
   - _Requirements: 8.1_
 
-- [ ] 0.2 Agent Engine + Memory Bankのセットアップ
+- [x] 0.2 Agent Engine + Memory Bankのセットアップ
   - Agent Engine インスタンスの作成（us-central1）
   - Memory Bank の有効化
   - Agent Engine ID を取得して .env に記録
@@ -21,7 +21,7 @@
 
 - [ ] 1. プロジェクト基盤のセットアップ
 
-- [ ] 1.1 バックエンド環境の構築
+- [x] 1.1 バックエンド環境の構築
   - Python 3.11+ 仮想環境と依存パッケージ（FastAPI、uvicorn、google-adk、pydantic、python-dotenv、google-cloud-firestore）の設定
   - 必要な環境変数（GCPプロジェクトID、Vertex AIロケーション、Agent Engine ID）を定義した .env.example の作成
   - FastAPI アプリのエントリポイントと設定管理モジュールの骨格実装

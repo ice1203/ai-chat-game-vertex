@@ -48,6 +48,17 @@ Agent Engine × Gemini 3 Imageを使ったステートフル対話アプリケ�
 - **Use `.env`**: All sensitive configuration must be in environment variables
 - **Public repository**: This is a public demo project - keep all content appropriate
 
+### Package Management
+- **Python**: `uv` で管理（`pyproject.toml` はプロジェクトルートに配置）
+  - パッケージ追加: `uv add <package>`
+  - 環境同期: `uv sync`
+  - スクリプト実行: `uv run <command>`
+  - **NEVER**: `pip install` は使わない
+- **Node.js**: `pnpm` で管理（frontend ディレクトリ内）
+  - パッケージ追加: `pnpm add <package>`
+  - 環境同期: `pnpm install`
+  - **NEVER**: `npm install` / `yarn` は使わない
+
 ### Code Quality
 - Type hints for all Python functions
 - TypeScript strict mode enabled
