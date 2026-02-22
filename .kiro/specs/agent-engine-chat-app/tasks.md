@@ -30,7 +30,7 @@
   - JSON構造化ログの設定（timestamp、level、service、error_type フィールド）
   - _Requirements: 8.1, 8.3_
 
-- [ ] 1.2 (P) フロントエンド環境の構築
+- [x] 1.2 (P) フロントエンド環境の構築
   - Next.js 14+ TypeScript プロジェクトの初期化（App Router、strict mode）
   - Tailwind CSS の設定
   - shadcn/ui の初期化（Card、Button、Input、ScrollArea、Skeleton コンポーネントの追加）
