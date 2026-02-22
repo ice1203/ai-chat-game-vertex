@@ -4,7 +4,7 @@ Agent Engine × Gemini 3 Imageを使ったステートフル対話アプリケ�
 
 ## Project Context
 
-このプロジェクトは、Google Cloud Next 2026年2月開催イベントでの登壇デモ用に開発されています。
+このプロジェクトは、Google Cloud関連登壇でのデモ用に開発されています。
 
 ### セッション概要
 - **タイトル**: Agent Engine × Gemini 3 Imageで作るステートフル対話アプリ

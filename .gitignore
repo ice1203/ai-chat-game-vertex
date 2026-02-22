@@ -93,3 +93,6 @@ data/
 *.tmp
 *.temp
 .cache/
+
+# Sandbox (hands-on experiments)
+sandbox/
