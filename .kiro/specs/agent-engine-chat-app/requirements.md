@@ -96,9 +96,10 @@
 #### 受入基準
 1. WHEN システムが初期化された THEN Chat System SHALL 親密度を0に設定する
 2. WHEN ユーザーとキャラクターが対話した THEN Chat System SHALL 会話内容に基づいて親密度を増減する（範囲: 0-100）
-3. WHEN 親密度が変化した THEN Chat System SHALL 変化後の値をMemory Bankに記録する
-4. WHEN Agent Engineが応答を生成する THEN Chat System SHALL 現在の親密度レベルに応じた応答トーンを使用する
-5. WHERE 親密度が計算される THE Chat System SHALL ポジティブな会話で増加、ネガティブな会話で減少するロジックを実装する
+3. WHEN 親密度が変化した THEN Chat System SHALL 変化後の値をFirestore（user_statesコレクション）に記録する
+4. WHEN 新しいSessionが開始された THEN Chat System SHALL シーンと感情をランダムに初期化する（親密度は引き継ぐ）
+5. WHEN Agent Engineが応答を生成する THEN Chat System SHALL 現在の親密度レベルに応じた応答トーンを使用する
+6. WHERE 親密度が計算される THE Chat System SHALL ポジティブな会話で増加、ネガティブな会話で減少するロジックを実装する
 
 ### 要件6: 構造化出力（JSON）
 **目的:** 開発者として、LLMの応答から必要な情報を確実に抽出するため、構造化されたJSON出力を得たい
@@ -112,7 +113,9 @@
   "emotion": "happy|sad|neutral|surprised|thoughtful",
   "scene": "indoor|outdoor|cafe|park",
   "needsImageUpdate": true|false,
-  "affinityChange": 0
+  "affinityChange": 0,
+  "isImportantEvent": true|false,
+  "eventSummary": "Memory Bankに保存する出来事の要約（isImportantEvent=trueの場合）"
 }
 ```
 2. IF JSON出力のパースに失敗した THEN Chat System SHALL デフォルト値を使用し、エラーログを記録する
