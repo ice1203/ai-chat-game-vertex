@@ -19,7 +19,7 @@
   - sandbox スクリプトで Agent Engine + Memory Bank への接続を確認
   - _Requirements: 3.1, 4.1_
 
-- [ ] 1. プロジェクト基盤のセットアップ
+- [x] 1. プロジェクト基盤のセットアップ
 
 - [x] 1.1 バックエンド環境の構築
   - Python 3.11+ 仮想環境と依存パッケージ（FastAPI、uvicorn、google-adk、pydantic、python-dotenv、google-cloud-firestore）の設定
@@ -39,15 +39,16 @@
 
 - [ ] 2. バックエンドデータモデルの定義
 
-- [ ] 2.1 会話・メッセージのデータモデル定義
+- [x] 2.1 会話・メッセージのデータモデル定義
   - 感情（happy/sad/neutral/surprised/thoughtful）、シーン（indoor/outdoor/cafe/park）、役割（user/agent）の列挙型定義
   - メッセージ送受信のリクエスト・レスポンスモデルをフィールド制約付きで定義
   - 対話応答の構造化データモデル（セリフ、情景描写、感情、シーン、画像更新フラグ、親密度変化量、重要イベントフラグ、イベントサマリー）の定義
   - 会話セッションとメッセージのデータ構造定義
   - _Requirements: 2.1, 2.2, 6.1_
 
-- [ ] 2.2 (P) 画像生成のデータモデル定義
-  - 画像生成リクエストとキャラクター設定のデータモデル定義
+- [x] 2.2 (P) 画像生成のデータモデル定義 (前提: 2.1)
+  - タスク2.1で定義済みのEmotionおよびScene列挙型を使ったImageGenerationRequestモデルの定義（emotion, scene, affinity_levelフィールド、affinity_levelは0-100の制約付き）
+  - data/characters/character.jsonの型安全なロードを可能にするCharacterConfigモデルの定義（name, personality, appearance_promptフィールド）
   - _Requirements: 7.1_
 
 - [ ] 3. (P) ADKエージェントの実装と動作確認 (前提: 0.2, 2.1)
@@ -104,7 +105,7 @@
 
 - [ ] 5. (P) ImageGenerationServiceの実装と動作確認 (前提: 1.1, 2.2)
 
-- [ ] 5.1 画像生成プロンプト構築ロジックの実装
+- [x] 5.1 画像生成プロンプト構築ロジックの実装
   - `data/characters/character.json` の `appearance_prompt` を読み込み、感情・シーンを組み合わせた最終プロンプトを生成（例: `{appearance_prompt}, happy expression, cafe background`）
   - 感情とシーンの英語プロンプト表現へのマッピングテーブルの実装
   - Gemini Image APIに適したプロンプト形式での出力
