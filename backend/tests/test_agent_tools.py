@@ -273,30 +273,36 @@ class TestUpdateAffinity:
 
 
 class TestSaveToMemory:
-    """Tests for save_to_memory tool."""
+    """Tests for save_to_memory tool (async — mocks VertexAiMemoryBankService)."""
 
-    def test_returns_saved_true(self) -> None:
-        """Should return saved=True."""
+    async def _call(self, content: str, user_id: str = "user1") -> dict:
+        from unittest.mock import AsyncMock, patch
+
         from app.services.agent_tools import save_to_memory
 
-        result = save_to_memory("ユーザーは猫が好き", _make_tool_context())
+        with patch.dict(
+            "os.environ",
+            {"GOOGLE_CLOUD_PROJECT": "proj", "AGENT_ENGINE_ID": "engine-id"},
+        ):
+            with patch("google.adk.memory.VertexAiMemoryBankService") as mock_cls:
+                mock_svc = mock_cls.return_value
+                mock_svc.add_events_to_memory = AsyncMock(return_value=None)
+                return await save_to_memory(content, _make_tool_context(user_id))
 
+    async def test_returns_saved_true(self) -> None:
+        """Should return saved=True on success."""
+        result = await self._call("ユーザーは猫が好き")
         assert result["saved"] is True
 
-    def test_returns_content_in_result(self) -> None:
+    async def test_returns_content_in_result(self) -> None:
         """Should echo the content back in the result."""
-        from app.services.agent_tools import save_to_memory
-
         content = "今日はとても楽しかった"
-        result = save_to_memory(content, _make_tool_context())
-
+        result = await self._call(content)
         assert result["content"] == content
 
-    def test_accepts_various_content(self) -> None:
+    async def test_accepts_various_content(self) -> None:
         """Should handle any string content."""
-        from app.services.agent_tools import save_to_memory
-
         for content in ["short", "a" * 500, "日本語のコンテンツ"]:
-            result = save_to_memory(content, _make_tool_context())
+            result = await self._call(content)
             assert result["saved"] is True
             assert result["content"] == content

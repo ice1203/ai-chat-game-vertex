@@ -29,6 +29,8 @@ SCENE_PROMPTS: dict[Scene, str] = {
     Scene.home: "home room background, comfortable",
 }
 
+REFERENCE_IMAGE_FILENAME = "reference.png"
+
 
 def _affinity_prompt(affinity_level: int) -> str:
     if affinity_level <= 30:
@@ -53,12 +55,40 @@ class ImageGenerationService:
         self.project_id = project_id
         self.location = location
         self.images_dir = Path(images_dir) if images_dir is not None else Path("data/images")
+        # In-memory cache keyed by (emotion, scene).
+        # Same combination reuses the existing image without calling the API again.
+        self._cache: dict[tuple[str, str], str] = {}
+        # Reference image for style consistency across generations.
+        # Populated from the first successful generation and persisted to disk.
+        self._reference_image_path = self.images_dir / REFERENCE_IMAGE_FILENAME
+        self._reference_image_bytes: Optional[bytes] = None
+        if self._reference_image_path.exists():
+            self._reference_image_bytes = self._reference_image_path.read_bytes()
+            logger.debug("Loaded reference image from %s", self._reference_image_path)
 
-    def build_prompt(self, request: ImageGenerationRequest) -> str:
-        """Build a Gemini Image API prompt from request and character config."""
+    def build_prompt(self, request: ImageGenerationRequest, has_reference: bool = False) -> str:
+        """Build a Gemini Image API prompt from request and character config.
+
+        When a reference image is available, the prompt instructs the model to keep
+        the character's appearance identical and vary only expression/scene/affinity.
+
+        Args:
+            request: Image generation parameters.
+            has_reference: Whether a reference image will be passed to the API.
+
+        Returns:
+            Prompt string to send to the image generation API.
+        """
         emotion_desc = EMOTION_PROMPTS[request.emotion]
         scene_desc = SCENE_PROMPTS[request.scene]
         affinity_desc = _affinity_prompt(request.affinity_level)
+        if has_reference:
+            return (
+                "Keep the character's appearance, hairstyle, eye color, and clothing "
+                "exactly as shown in the reference image. "
+                f"Change only the expression to: {emotion_desc}. "
+                f"Background: {scene_desc}. {affinity_desc}."
+            )
         return (
             f"{self.character_config.appearance_prompt}, "
             f"{emotion_desc}, {scene_desc}, {affinity_desc}"
@@ -67,21 +97,37 @@ class ImageGenerationService:
     def generate_image(self, request: ImageGenerationRequest) -> Optional[str]:
         """Generate an image via Gemini 3 Pro Image API and save it locally.
 
-        Retries once on failure. Returns the saved file path on success,
-        or None if both attempts fail.
+        Returns cached path if the same (emotion, scene) was generated before.
+        Retries once on failure. Returns None if both attempts fail.
+        After the first successful generation the image is saved as a style
+        reference and passed to all subsequent API calls for visual consistency.
 
         Args:
             request: Image generation parameters (emotion, scene, affinity_level).
 
         Returns:
-            Absolute file path of the saved PNG, or None on failure.
+            URL path of the saved PNG, or None on failure.
         """
-        prompt = self.build_prompt(request)
+        cache_key = (request.emotion.value, request.scene.value)
+        if cache_key in self._cache:
+            logger.debug(
+                "Image cache hit: %s/%s → %s",
+                request.emotion.value,
+                request.scene.value,
+                self._cache[cache_key],
+            )
+            return self._cache[cache_key]
+
+        prompt = self.build_prompt(request, has_reference=self._reference_image_bytes is not None)
 
         for attempt in range(2):
             try:
-                image_bytes = self._call_image_api(prompt)
-                return self._save_image(image_bytes, request.emotion, request.scene)
+                image_bytes = self._call_image_api(prompt, self._reference_image_bytes)
+                image_path = self._save_image(image_bytes, request.emotion, request.scene)
+                self._cache[cache_key] = image_path
+                if self._reference_image_bytes is None:
+                    self._save_reference_image(image_bytes)
+                return image_path
             except Exception as exc:
                 logger.error(
                     "Image generation failed (attempt %d/2): %s: %s",
@@ -97,11 +143,29 @@ class ImageGenerationService:
 
         return None
 
-    def _call_image_api(self, prompt: str) -> bytes:
+    def _save_reference_image(self, image_bytes: bytes) -> None:
+        """Persist the first generated image as the style reference.
+
+        Args:
+            image_bytes: Raw PNG bytes of the reference image.
+        """
+        self.images_dir.mkdir(parents=True, exist_ok=True)
+        self._reference_image_path.write_bytes(image_bytes)
+        self._reference_image_bytes = image_bytes
+        logger.info("Saved style reference image to %s", self._reference_image_path)
+
+    def _call_image_api(
+        self, prompt: str, reference_image_bytes: Optional[bytes] = None
+    ) -> bytes:
         """Call Vertex AI Gemini 3 Pro Image API and return raw PNG bytes.
+
+        When reference_image_bytes is provided the image is included as the first
+        part of a multimodal request so the model can maintain visual style consistency.
 
         Args:
             prompt: The image generation prompt built from character config and state.
+            reference_image_bytes: Optional PNG bytes of a previously generated image
+                used as a visual style anchor.
 
         Returns:
             Raw image bytes from the API response.
@@ -112,21 +176,37 @@ class ImageGenerationService:
         from google import genai  # type: ignore[import-untyped]
         from google.genai import types  # type: ignore[import-untyped]
 
+        # Gemini 3 Pro Image is only available on the global endpoint.
         client = genai.Client(
             vertexai=True,
             project=self.project_id,
-            location=self.location,
+            location="global",
         )
+
+        if reference_image_bytes is not None:
+            contents: object = [
+                types.Part(
+                    inline_data=types.Blob(data=reference_image_bytes, mime_type="image/png")
+                ),
+                types.Part(text=prompt),
+            ]
+        else:
+            contents = prompt
+
         response = client.models.generate_content(
             model="gemini-3-pro-image-preview",
-            contents=prompt,
+            contents=contents,
             config=types.GenerateContentConfig(
                 response_modalities=["IMAGE"],
                 system_instruction=self.character_config.appearance_prompt,
             ),
         )
 
-        for part in response.candidates[0].content.parts:
+        candidates = response.candidates
+        if not candidates or candidates[0].content is None:
+            raise RuntimeError("No candidates returned by Gemini Image API")
+
+        for part in candidates[0].content.parts:
             if hasattr(part, "inline_data") and part.inline_data is not None:
                 return bytes(part.inline_data.data)
 
@@ -150,4 +230,5 @@ class ImageGenerationService:
         filename = f"{emotion.value}_{scene.value}_{timestamp}.png"
         file_path = self.images_dir / filename
         file_path.write_bytes(image_bytes)
-        return str(file_path)
+        # Return URL path served by FastAPI /images static mount
+        return f"/images/{filename}"

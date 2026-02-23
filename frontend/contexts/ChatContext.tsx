@@ -78,7 +78,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SEND_MESSAGE_START', userMessage: message })
     try {
       const response = await sendConversationMessage({
-        user_id: 'demo-user',
+        user_id: process.env.NEXT_PUBLIC_USER_ID ?? 'demo_user_001',
         message,
         session_id: state.sessionId ?? undefined,
       })

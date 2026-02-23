@@ -95,7 +95,7 @@ def update_affinity(delta: int, tool_context: ToolContext) -> dict:
     return {"affinity_level": new_affinity}
 
 
-def save_to_memory(content: str, tool_context: ToolContext) -> dict:
+async def save_to_memory(content: str, tool_context: ToolContext) -> dict:
     """Save an important memory to Memory Bank.
 
     Use when the user reveals preferences, important events occur, or
@@ -108,12 +108,42 @@ def save_to_memory(content: str, tool_context: ToolContext) -> dict:
 
     Returns:
         A dict with keys: saved (bool), content (str).
-
-    Note:
-        Full Memory Bank write requires the deployed Agent Engine runtime
-        context.  In local / test environments this returns the placeholder
-        result without making an external API call.
     """
+    import os
+
+    from google.adk.events import Event
+    from google.adk.memory import VertexAiMemoryBankService
+    from google.genai import types as genai_types
+
     user_id: str = tool_context.state.get("user_id", "unknown")
-    logger.info("save_to_memory called for user_id=%s", user_id)
+
+    project = os.getenv("GOOGLE_CLOUD_PROJECT", "")
+    location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    agent_engine_id = os.getenv("AGENT_ENGINE_ID", "")
+
+    if not agent_engine_id:
+        logger.warning("AGENT_ENGINE_ID not set — skipping Memory Bank write")
+        return {"saved": False, "error": "AGENT_ENGINE_ID not configured"}
+
+    memory_service = VertexAiMemoryBankService(
+        project=project,
+        location=location,
+        agent_engine_id=agent_engine_id,
+    )
+
+    event = Event(
+        author="user",
+        content=genai_types.Content(
+            role="user",
+            parts=[genai_types.Part(text=content)],
+        ),
+    )
+
+    await memory_service.add_events_to_memory(
+        app_name="character_agent",
+        user_id=user_id,
+        events=[event],
+    )
+
+    logger.info("Memory saved for user_id=%s: %.80s", user_id, content)
     return {"saved": True, "content": content}

@@ -30,6 +30,15 @@ class Scene(str, Enum):
 
 
 
+class Message(BaseModel):
+    """会話ログの1メッセージ。履歴エンドポイントのレスポンスに使用。"""
+
+    role: str  # "user" | "agent"
+    dialogue: str
+    narration: Optional[str] = None
+    timestamp: str
+
+
 class ConversationRequest(BaseModel):
     """Request model for sending a message."""
 

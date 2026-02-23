@@ -189,6 +189,58 @@ class TestSendMessageOrchestration:
         assert ctx["scene"] == "park"
         assert ctx["affinity_level"] == 30
 
+    async def test_history_stored_after_turn(self) -> None:
+        """User and agent messages should be stored in history after send_message."""
+        from app.services.conversation import ConversationService
+
+        svc = ConversationService(
+            chat_agent=_make_chat_agent_mock(session_id="sess-x"),
+            image_service=_make_image_service_mock(None),
+        )
+        await svc.send_message(ConversationRequest(user_id="u", message="hello"))
+
+        history = svc.get_history("sess-x")
+        assert len(history) == 2
+        assert history[0].role == "user"
+        assert history[0].dialogue == "hello"
+        assert history[1].role == "agent"
+
+    async def test_history_accumulates_across_turns(self) -> None:
+        """History should grow with each turn."""
+        from app.services.conversation import ConversationService
+
+        mock_agent = _make_chat_agent_mock(session_id="sess-y")
+        svc = ConversationService(
+            chat_agent=mock_agent, image_service=_make_image_service_mock(None)
+        )
+        await svc.send_message(ConversationRequest(user_id="u", message="turn1", session_id="sess-y"))
+        await svc.send_message(ConversationRequest(user_id="u", message="turn2", session_id="sess-y"))
+
+        history = svc.get_history("sess-y")
+        assert len(history) == 4  # 2 messages per turn
+
+    async def test_get_history_respects_limit(self) -> None:
+        """get_history should return at most `limit` messages."""
+        from app.services.conversation import ConversationService
+
+        mock_agent = _make_chat_agent_mock(session_id="sess-z")
+        svc = ConversationService(
+            chat_agent=mock_agent, image_service=_make_image_service_mock(None)
+        )
+        for _ in range(3):
+            await svc.send_message(ConversationRequest(user_id="u", message="m", session_id="sess-z"))
+
+        history = svc.get_history("sess-z", limit=2)
+        assert len(history) == 2
+
+    async def test_get_history_empty_for_unknown_session(self) -> None:
+        from app.services.conversation import ConversationService
+
+        svc = ConversationService(
+            chat_agent=_make_chat_agent_mock(), image_service=_make_image_service_mock(None)
+        )
+        assert svc.get_history("unknown-session") == []
+
 
 # ---------------------------------------------------------------------------
 # Task 6.2: Image generation trigger (programmatic state change only)
@@ -196,7 +248,7 @@ class TestSendMessageOrchestration:
 
 
 class TestImageGenerationTrigger:
-    """Trigger = emotion_change OR scene_change OR affinity_change >= 10."""
+    """Trigger = emotion CATEGORY change OR scene change OR affinity >= 10."""
 
     async def _run(
         self,
@@ -214,12 +266,59 @@ class TestImageGenerationTrigger:
         resp = await svc.send_message(ConversationRequest(user_id="u", message="m"))
         return resp, mock_image
 
-    async def test_generates_when_emotion_changes(self) -> None:
+    # --- Emotion category change triggers ---
+
+    async def test_generates_when_emotion_category_changes(self) -> None:
+        """neutral(neutral) → happy(positive): category change → generate."""
         structured = _make_structured(emotion=Emotion.happy, scene=Scene.indoor, affinity_level=0)
         _, mock_image = await self._run(
             structured, prev={"emotion": "neutral", "scene": "indoor", "affinity_level": 0}
         )
         mock_image.generate_image.assert_called_once()
+
+    async def test_generates_when_positive_to_negative(self) -> None:
+        """happy(positive) → sad(negative): category change → generate."""
+        structured = _make_structured(emotion=Emotion.sad, scene=Scene.indoor, affinity_level=0)
+        _, mock_image = await self._run(
+            structured, prev={"emotion": "happy", "scene": "indoor", "affinity_level": 0}
+        )
+        mock_image.generate_image.assert_called_once()
+
+    async def test_generates_when_neutral_to_expressive(self) -> None:
+        """neutral → surprised(expressive): category change → generate."""
+        structured = _make_structured(emotion=Emotion.surprised, scene=Scene.indoor, affinity_level=0)
+        _, mock_image = await self._run(
+            structured, prev={"emotion": "neutral", "scene": "indoor", "affinity_level": 0}
+        )
+        mock_image.generate_image.assert_called_once()
+
+    # --- Same emotion category does NOT trigger ---
+
+    async def test_no_image_when_same_positive_category(self) -> None:
+        """happy → excited: both positive → no generate."""
+        structured = _make_structured(emotion=Emotion.excited, scene=Scene.indoor, affinity_level=0)
+        _, mock_image = await self._run(
+            structured, prev={"emotion": "happy", "scene": "indoor", "affinity_level": 0}
+        )
+        mock_image.generate_image.assert_not_called()
+
+    async def test_no_image_when_same_neutral_category(self) -> None:
+        """neutral → thoughtful: both neutral → no generate."""
+        structured = _make_structured(emotion=Emotion.thoughtful, scene=Scene.indoor, affinity_level=0)
+        _, mock_image = await self._run(
+            structured, prev={"emotion": "neutral", "scene": "indoor", "affinity_level": 0}
+        )
+        mock_image.generate_image.assert_not_called()
+
+    async def test_no_image_when_same_expressive_category(self) -> None:
+        """surprised → embarrassed: both expressive → no generate."""
+        structured = _make_structured(emotion=Emotion.embarrassed, scene=Scene.indoor, affinity_level=0)
+        _, mock_image = await self._run(
+            structured, prev={"emotion": "surprised", "scene": "indoor", "affinity_level": 0}
+        )
+        mock_image.generate_image.assert_not_called()
+
+    # --- Scene change triggers ---
 
     async def test_generates_when_scene_changes(self) -> None:
         structured = _make_structured(emotion=Emotion.neutral, scene=Scene.cafe, affinity_level=0)
@@ -227,6 +326,8 @@ class TestImageGenerationTrigger:
             structured, prev={"emotion": "neutral", "scene": "indoor", "affinity_level": 0}
         )
         mock_image.generate_image.assert_called_once()
+
+    # --- Affinity threshold triggers ---
 
     async def test_generates_when_affinity_exceeds_threshold(self) -> None:
         structured = _make_structured(emotion=Emotion.neutral, scene=Scene.indoor, affinity_level=10)

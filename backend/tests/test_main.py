@@ -11,13 +11,14 @@ def test_health_endpoint_returns_200() -> None:
 
 
 def test_health_endpoint_returns_status_ok() -> None:
-    """Health check response should contain status=ok."""
+    """Health check response should contain status=ok and version."""
     from app.main import app
     client = TestClient(app)
     response = client.get("/health")
     data = response.json()
     assert data["status"] == "ok"
     assert "version" in data
+    assert "services" in data
 
 
 def test_app_has_correct_title() -> None:

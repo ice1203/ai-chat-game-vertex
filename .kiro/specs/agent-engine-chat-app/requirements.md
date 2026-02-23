@@ -55,12 +55,13 @@
 
 #### 受入基準
 1. WHEN システムが起動された THEN Chat System SHALL キャラクター画像表示エリアにデフォルトの画像を表示する
-2. WHEN AIキャラクターが会話応答を生成した THEN Chat System SHALL 感情・シーンの変化度合いを判定する
-3. IF 大きな変化が検出された（感情カテゴリの変更、場所移動） THEN Chat System SHALL 新しい画像を同期生成する
-4. IF 変化が小さい（同じカテゴリ内の感情変化、通常会話のみ） THEN Chat System SHALL 現在表示中の画像を維持する
-5. WHILE 画像が生成中である THE Chat System SHALL ローディング表示を行い、生成完了まで待機する
-6. WHEN 画像生成が完了した THEN Chat System SHALL 新しい画像を表示する
-7. IF 画像生成がエラーになった THEN Chat System SHALL 前回の画像を維持し、エラーログを記録する
+2. WHEN AIキャラクターが会話応答を生成した THEN Chat System SHALL 感情カテゴリ・シーン・親密度の変化を判定する
+3. IF 感情カテゴリが変化した（例: neutral→positive）またはシーンが変化した THEN Chat System SHALL 新しい画像を同期生成する
+4. IF 感情カテゴリが同じ（例: happy→excited）かつシーン変化なしかつ親密度変化が±10未満 THEN Chat System SHALL 現在表示中の画像を維持する
+5. IF 同一の感情×シーンの組み合わせが過去に生成済みである THEN Chat System SHALL キャッシュされた画像を返し、APIを呼ばない
+6. WHILE 画像が生成中である THEN Chat System SHALL ローディング表示を行い、生成完了まで待機する
+7. WHEN 画像生成が完了した THEN Chat System SHALL 新しい画像を表示する
+8. IF 画像生成がエラーになった THEN Chat System SHALL 前回の画像を維持し、エラーログを記録する
 
 ### 要件2: 会話機能
 **目的:** ユーザーとして、AIキャラクターと自然で一貫性のある会話を楽しむために、テキストベースで対話したい
@@ -95,11 +96,11 @@
 
 #### 受入基準
 1. WHEN システムが初期化された THEN Chat System SHALL 親密度を0に設定する
-2. WHEN ユーザーとキャラクターが対話した THEN Chat System SHALL 会話内容に基づいて親密度を増減する（範囲: 0-100）
-3. WHEN 親密度が変化した THEN Chat System SHALL 変化後の値をFirestore（user_statesコレクション）に記録する
-4. WHEN 新しいSessionが開始された THEN Chat System SHALL シーンと感情をランダムに初期化する（親密度は引き継ぐ）
-5. WHEN Agent Engineが応答を生成する THEN Chat System SHALL 現在の親密度レベルに応じた応答トーンを使用する
-6. WHERE 親密度が計算される THE Chat System SHALL ポジティブな会話で増加、ネガティブな会話で減少するロジックを実装する
+2. WHEN ユーザーとキャラクターが対話した THEN Chat System SHALL LLMが会話内容に基づいてStructuredResponseのaffinity_levelを更新する（範囲: 0-100）
+3. WHEN 会話ターンが完了した THEN Chat System SHALL ConversationServiceがFirestore（user_statesコレクション）にaffinity_levelを記録する
+4. WHEN 新しいSessionが開始された THEN Chat System SHALL initialize_sessionツールがFirestoreから親密度を読み込み、シーンと感情をランダムに初期化する
+5. WHEN Agent Engineが応答を生成する THEN Chat System SHALL コンテキストメッセージの親密度レベルに応じた応答トーンを使用する
+6. WHERE 親密度が計算される THEN Chat System SHALL LLMがポジティブな会話で増加、ネガティブな会話で減少するロジックを判断し、ConversationServiceは前ターンの値とStructuredResponseの値を比較してFirestoreに保存する
 
 ### 要件6: 構造化出力（JSON）
 **目的:** 開発者として、LLMの応答から必要な情報を確実に抽出するため、構造化されたJSON出力を得たい
@@ -110,15 +111,13 @@
 {
   "dialogue": "セリフ部分",
   "narration": "情景描写部分",
-  "emotion": "happy|sad|neutral|surprised|thoughtful",
-  "scene": "indoor|outdoor|cafe|park",
-  "needsImageUpdate": true|false,
-  "affinityChange": 0,
-  "isImportantEvent": true|false,
-  "eventSummary": "Memory Bankに保存する出来事の要約（isImportantEvent=trueの場合）"
+  "emotion": "happy|sad|neutral|surprised|thoughtful|embarrassed|excited|angry",
+  "scene": "indoor|outdoor|cafe|park|school|home",
+  "affinity_level": 0
 }
 ```
-2. IF JSON出力のパースに失敗した THEN Chat System SHALL デフォルト値を使用し、エラーログを記録する
+注: `needsImageUpdate` / `affinityChange` / `isImportantEvent` / `eventSummary` はAgent Engineのカスタムツールに移行済みのため含まない。画像生成トリガーはConversationServiceがプログラム的に判定する。
+2. IF JSON出力のパースに失敗した THEN Chat System SHALL デフォルト値（emotion: neutral, scene: indoor, affinity_level: 0）を使用し、エラーログを記録する
 
 ### 要件7: 画像生成プロンプト構築
 **目的:** 開発者として、適切な画像を生成するため、シーン・感情情報に基づいたプロンプトを構築したい
@@ -169,8 +168,9 @@
 - **AI Platform**: Vertex AI Agent Engine
   - Memory Bank
   - Sessions
-- **Image Generation**: Gemini 3 Pro Image (Imagen 3)
-- **Storage**: File-based (JSON)
+- **Image Generation**: Gemini 3 Pro Image（`gemini-3-pro-image-preview`、globalエンドポイント）
+- **Storage**: File-based（`data/images/` をFastAPI `/images/` エンドポイントで配信）
+- **State**: Cloud Firestore（親密度の永続化）
 
 ## 段階的開発プラン
 
