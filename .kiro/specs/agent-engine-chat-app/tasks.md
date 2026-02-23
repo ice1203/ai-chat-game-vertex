@@ -205,27 +205,27 @@
 
 - [ ] 9. UIコンポーネントの実装とフロントエンド疎通確認 (前提: 8)
 
-- [ ] 9.1 (P) CharacterImageDisplayコンポーネントの実装
+- [x] 9.1 (P) CharacterImageDisplayコンポーネントの実装
   - 画像URLを受け取り画像を表示するコンポーネント（shadcn/ui の Card を使用）
   - 画像生成中のスピナー/Skeleton表示（shadcn/ui の Skeleton を使用）
   - 初回表示用のデフォルト画像設定
   - _Requirements: 1.1, 1.5, 1.6, 9.4_
 
-- [ ] 9.2 (P) ConversationLogコンポーネントの実装
+- [x] 9.2 (P) ConversationLogコンポーネントの実装
   - shadcn/ui の ScrollArea で会話ログを囲んだスクロール可能な表示領域
   - ユーザーメッセージ（右寄せ）とキャラクターメッセージ（左寄せ）を区別した表示
   - セリフと情景描写のスタイル分け表示
   - 最新メッセージへの自動スクロール
   - _Requirements: 2.2, 2.5, 9.3_
 
-- [ ] 9.3 (P) MessageInputコンポーネントの実装
+- [x] 9.3 (P) MessageInputコンポーネントの実装
   - shadcn/ui の Input + Button を使用したテキスト入力フォームと送信ボタン
   - Enterキー送信対応
   - 空メッセージ送信の拒否（フロントエンドバリデーション）
   - ローディング中の入力欄とボタンの無効化
   - _Requirements: 2.1, 2.3, 2.4, 9.2, 9.4_
 
-- [ ] 9.4 ChatPageの組み立て
+- [x] 9.4 ChatPageの組み立て
   - ChatProviderでラップしたChatPageコンポーネントの実装
   - CharacterImageDisplay、ConversationLog、MessageInputを縦レイアウトで配置
   - _Requirements: 9.1_
