@@ -62,7 +62,7 @@
 
 - [ ] 3. (P) ADKエージェントの実装と動作確認 (前提: 0.2, 2.1)
 
-- [x] 3.1 ADKエージェントの初期化とシステムインストラクション構築
+- [ ] 3.1 ADKエージェントの初期化とシステムインストラクション構築
   - Memory Bankサービスの接続設定
   - モデル: gemini-3.1-pro-preview を使用
   - キャラクター設定・各フィールドの意味・応答ルールのみをシステムインストラクションに記述（JSON形式の説明は不要。response_schemaがAPI側で構造を強制するため、プロンプトへの重複記述は品質低下の原因となる）
@@ -78,7 +78,7 @@
   - `build_agent()` 関数を `backend/app/services/agent.py` からエクスポート可能な形に分離（deploy.pyとFastAPIの両方から参照できるように）
   - システムインストラクションに3つのツールの使い方ガイドラインを追記（「セッション開始時はinitialize_sessionを呼ぶ」「毎ターン最後にupdate_affinityを呼ぶ」「重要な出来事があればsave_to_memoryを呼ぶ」）
   - StructuredResponseを更新: `affinityChange` / `isImportantEvent` / `eventSummary` を削除 → `affinity_level`（ツール呼び出し後の現在値）を追加
-  - _Requirements: 4.1, 4.4, 5.1, 5.3, 5.4_
+  - _Requirements: 4.1, 4.4, 5.1, 5.2, 5.3, 5.4, 5.6_
 
 - [ ] 3.2 デプロイ済みAdkAppを使ったChatAgentのリファクタリング (前提: 0.3完了)
   - `ChatAgent.initialize()` を `Runner`+`VertexAiSessionService` から `vertexai.Client.agent_engines.get()` ベースに変更
@@ -153,12 +153,12 @@
 - [ ] 6. ConversationServiceの実装 (前提: 3, 4, 5)
 
 - [ ] 6.1 会話ターンのオーケストレーション実装
-  - メッセージ送信処理：エージェント実行 → 構造化応答取得 → 親密度計算 → 親密度更新 → Memory Bank書き込み判定の順次処理
-  - 現在の親密度・シーン・感情をエージェントのメッセージコンテキストに渡す仕組みの実装
-  - 親密度変化量に基づく親密度更新（0-100範囲制限）
-  - 親密度変化量±10以上またはisImportantEvent=trueの場合にeventSummaryをMemory Bankへ非同期書き込み(重要イベントの保存判定はConversationServiceが一元的に担う)
-  - 会話応答データの組み立てと返却（次ターン用にシーン・感情を更新）
-  - _Requirements: 2.1, 2.2, 4.1, 5.2, 5.6_
+  - メッセージ送信処理：エージェント呼び出し（async_stream_query） → StructuredResponse取得 → 画像生成判定 → レスポンス組み立て の順次処理
+  - 現在の親密度・シーン・感情をエージェントのメッセージコンテキストに付加して送信する仕組みの実装
+  - StructuredResponseの `affinity_level` フィールドを次ターンのContextとして引き継ぐ処理
+  - 会話応答データ（dialogue, narration, emotion, scene, affinity_level, image_url）の組み立てと返却
+  - ※ Memory Bank書き込み・Firestore更新はAgent Engine内のカスタムツール（initialize_session/update_affinity/save_to_memory）が担当。ConversationServiceは状態管理を行わない
+  - _Requirements: 2.1, 2.2_
 
 - [ ] 6.2 画像生成トリガー判定とフォールバックの実装
   - needsImageUpdateフラグ + 感情カテゴリ変更・シーン変更・親密度閾値超過（±10）の複合検証ロジック（LLMの提案をバックエンドが最終判定）
