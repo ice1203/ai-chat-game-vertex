@@ -1,6 +1,6 @@
-"""Tests for ChatAgent service (Task 3.1) and build_agent (Task 3.1.5)."""
+"""Tests for ChatAgent service (Task 3.1, 3.1.5, 3.2, 3.3)."""
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.models.image import CharacterConfig
 
@@ -16,26 +16,12 @@ def character_config() -> CharacterConfig:
 
 
 # ---------------------------------------------------------------------------
-# _build_context_message Tests
+# _build_context_message Tests (Task 3.2: affinity_level removed from args)
 # ---------------------------------------------------------------------------
 
 
 class TestBuildContextMessage:
     """Tests for _build_context_message method."""
-
-    def test_includes_affinity_level(self, character_config: CharacterConfig) -> None:
-        """Context message should contain the affinity level."""
-        from app.services.agent import ChatAgent
-
-        agent = ChatAgent("p", "l", "e", character_config)
-        msg = agent._build_context_message(
-            user_message="こんにちは",
-            affinity_level=42,
-            scene="cafe",
-            emotion="happy",
-        )
-
-        assert "42" in msg
 
     def test_includes_scene(self, character_config: CharacterConfig) -> None:
         """Context message should contain the current scene."""
@@ -44,7 +30,6 @@ class TestBuildContextMessage:
         agent = ChatAgent("p", "l", "e", character_config)
         msg = agent._build_context_message(
             user_message="こんにちは",
-            affinity_level=10,
             scene="cafe",
             emotion="neutral",
         )
@@ -58,7 +43,6 @@ class TestBuildContextMessage:
         agent = ChatAgent("p", "l", "e", character_config)
         msg = agent._build_context_message(
             user_message="こんにちは",
-            affinity_level=10,
             scene="indoor",
             emotion="happy",
         )
@@ -73,23 +57,37 @@ class TestBuildContextMessage:
         user_msg = "好きな食べ物は何ですか？"
         msg = agent._build_context_message(
             user_message=user_msg,
-            affinity_level=30,
             scene="cafe",
             emotion="happy",
         )
 
         assert user_msg in msg
 
-    def test_different_affinity_levels(self, character_config: CharacterConfig) -> None:
-        """Context message should correctly reflect different affinity levels."""
+    def test_returns_string(self, character_config: CharacterConfig) -> None:
+        """Context message should be a plain string (not types.Content)."""
         from app.services.agent import ChatAgent
 
         agent = ChatAgent("p", "l", "e", character_config)
-        msg_low = agent._build_context_message("hello", 0, "indoor", "neutral")
-        msg_high = agent._build_context_message("hello", 100, "indoor", "neutral")
+        msg = agent._build_context_message(
+            user_message="hello",
+            scene="indoor",
+            emotion="neutral",
+        )
 
-        assert "0" in msg_low
-        assert "100" in msg_high
+        assert isinstance(msg, str)
+
+    def test_does_not_include_user_id(self, character_config: CharacterConfig) -> None:
+        """Context message should NOT include user_id (stored in session state instead)."""
+        from app.services.agent import ChatAgent
+
+        agent = ChatAgent("p", "l", "e", character_config)
+        msg = agent._build_context_message(
+            user_message="hello",
+            scene="indoor",
+            emotion="neutral",
+        )
+
+        assert "ユーザーID" not in msg
 
 
 # ---------------------------------------------------------------------------
@@ -121,18 +119,12 @@ class TestBuildSystemInstructions:
     def test_does_not_contain_json_schema_syntax(
         self, character_config: CharacterConfig
     ) -> None:
-        """System instructions must NOT include JSON schema syntax (degrades output quality).
-
-        The response_schema in generate_content_config enforces structure at
-        API level. Duplicating schema in prompt degrades output quality per
-        official documentation.
-        """
+        """System instructions must NOT include JSON schema syntax."""
         from app.services.agent import ChatAgent
 
         agent = ChatAgent("p", "l", "e", character_config)
         instructions = agent._build_system_instructions()
 
-        # No JSON schema syntax in instructions
         assert '"dialogue":' not in instructions
         assert '"needsImageUpdate":' not in instructions
         assert '"isImportantEvent":' not in instructions
@@ -147,7 +139,6 @@ class TestBuildSystemInstructions:
         agent = ChatAgent("p", "l", "e", character_config)
         instructions = agent._build_system_instructions()
 
-        # Field names should appear with explanations (not as JSON schema)
         assert "dialogue" in instructions
         assert "emotion" in instructions
 
@@ -162,12 +153,12 @@ class TestBuildSystemInstructions:
 
 
 # ---------------------------------------------------------------------------
-# ChatAgent Initialization Tests
+# ChatAgent Constructor Tests
 # ---------------------------------------------------------------------------
 
 
-class TestChatAgentInitialization:
-    """Tests for ChatAgent constructor and initialize() method."""
+class TestChatAgentConstruction:
+    """Tests for ChatAgent constructor."""
 
     def test_stores_project_id(self, character_config: CharacterConfig) -> None:
         """ChatAgent should store project_id."""
@@ -197,192 +188,234 @@ class TestChatAgentInitialization:
         agent = ChatAgent("p", "l", "e", character_config)
         assert agent.character_config == character_config
 
-    @patch("app.services.agent.VertexAiSessionService")
-    @patch("app.services.agent.VertexAiMemoryBankService")
-    @patch("app.services.agent.Runner")
-    @patch("app.services.agent.Agent")
-    def test_agent_uses_correct_model(
-        self,
-        mock_agent: object,
-        mock_runner: object,
-        mock_memory: object,
-        mock_session: object,
-        character_config: CharacterConfig,
-    ) -> None:
-        """Agent should be initialized with the specified model ID."""
-        from app.services.agent import ChatAgent, MODEL_ID
-        from unittest.mock import MagicMock
-
-        chat_agent = ChatAgent(
-            "test-project", "us-central1", "test-engine", character_config
-        )
-        chat_agent.initialize()
-
-        assert isinstance(mock_agent, MagicMock)
-        mock_agent.assert_called_once()  # type: ignore[attr-defined]
-        assert mock_agent.call_args.kwargs["model"] == MODEL_ID  # type: ignore[attr-defined]
-
-    @patch("app.services.agent.VertexAiSessionService")
-    @patch("app.services.agent.VertexAiMemoryBankService")
-    @patch("app.services.agent.Runner")
-    @patch("app.services.agent.Agent")
-    def test_agent_has_json_response_config(
-        self,
-        mock_agent: object,
-        mock_runner: object,
-        mock_memory: object,
-        mock_session: object,
-        character_config: CharacterConfig,
-    ) -> None:
-        """Agent should be configured with JSON response schema."""
+    def test_adk_app_initially_none(self, character_config: CharacterConfig) -> None:
+        """_adk_app should be None before initialize() is called."""
         from app.services.agent import ChatAgent
 
-        chat_agent = ChatAgent(
-            "test-project", "us-central1", "test-engine", character_config
-        )
-        chat_agent.initialize()
+        agent = ChatAgent("p", "l", "e", character_config)
+        assert agent._adk_app is None
 
-        from unittest.mock import MagicMock
 
-        assert isinstance(mock_agent, MagicMock)
-        mock_agent.assert_called_once()  # type: ignore[attr-defined]
-        config = mock_agent.call_args.kwargs["generate_content_config"]  # type: ignore[attr-defined]
-        assert config.response_mime_type == "application/json"
-        assert config.response_schema is not None
+# ---------------------------------------------------------------------------
+# ChatAgent.initialize() Tests (Task 3.2)
+# ---------------------------------------------------------------------------
 
-    @patch("app.services.agent.VertexAiSessionService")
-    @patch("app.services.agent.VertexAiMemoryBankService")
-    @patch("app.services.agent.Runner")
-    @patch("app.services.agent.Agent")
-    def test_agent_response_schema_matches_structured_response(
-        self,
-        mock_agent: object,
-        mock_runner: object,
-        mock_memory: object,
-        mock_session: object,
-        character_config: CharacterConfig,
+
+class TestChatAgentInitialize:
+    """Tests for the refactored initialize() using vertexai.agent_engines."""
+
+    @patch("app.services.agent.vertexai")
+    def test_calls_vertexai_init_with_project_and_location(
+        self, mock_vertexai: MagicMock, character_config: CharacterConfig
     ) -> None:
-        """Agent response schema should match StructuredResponse model schema."""
+        """initialize() should call vertexai.init with project and location."""
         from app.services.agent import ChatAgent
+
+        agent = ChatAgent("my-project", "us-central1", "engine-123", character_config)
+        agent.initialize()
+
+        mock_vertexai.init.assert_called_once_with(
+            project="my-project",
+            location="us-central1",
+        )
+
+    @patch("app.services.agent.vertexai")
+    def test_calls_agent_engines_get_with_id(
+        self, mock_vertexai: MagicMock, character_config: CharacterConfig
+    ) -> None:
+        """initialize() should call vertexai.agent_engines.get with agent_engine_id."""
+        from app.services.agent import ChatAgent
+
+        agent = ChatAgent("p", "l", "engine-999", character_config)
+        agent.initialize()
+
+        mock_vertexai.agent_engines.get.assert_called_once_with("engine-999")
+
+    @patch("app.services.agent.vertexai")
+    def test_stores_adk_app_reference(
+        self, mock_vertexai: MagicMock, character_config: CharacterConfig
+    ) -> None:
+        """initialize() should store the AgentEngine object as _adk_app."""
+        from app.services.agent import ChatAgent
+
+        mock_app = MagicMock()
+        mock_vertexai.agent_engines.get.return_value = mock_app
+
+        agent = ChatAgent("p", "l", "e", character_config)
+        agent.initialize()
+
+        assert agent._adk_app is mock_app
+
+
+# ---------------------------------------------------------------------------
+# ChatAgent.run() Tests (Task 3.2)
+# ---------------------------------------------------------------------------
+
+
+async def _async_gen(*events: dict):  # type: ignore[return]
+    """Helper: async generator that yields given dicts as stream events."""
+    for event in events:
+        yield event
+
+
+class TestChatAgentRun:
+    """Tests for the new run() method using async_stream_query."""
+
+    def _make_agent(self, character_config: CharacterConfig) -> "ChatAgent":  # type: ignore[name-defined]
+        from app.services.agent import ChatAgent
+
+        agent = ChatAgent("p", "l", "e", character_config)
+        return agent
+
+    def _make_adk_app(
+        self,
+        session_id: str = "session-123",
+        events: list | None = None,
+    ) -> MagicMock:
+        """Build a mock adk_app with preset session and stream events."""
+        mock_session = MagicMock()
+        mock_session.id = session_id
+
+        mock_adk_app = MagicMock()
+        mock_adk_app.async_create_session = AsyncMock(return_value=mock_session)
+        mock_adk_app.async_stream_query = lambda **kw: _async_gen(*(events or []))
+        return mock_adk_app
+
+    async def test_creates_new_session_when_session_id_is_none(
+        self, character_config: CharacterConfig
+    ) -> None:
+        """run() should call async_create_session when no session_id provided."""
+        agent = self._make_agent(character_config)
+        agent._adk_app = self._make_adk_app(session_id="new-session")
+
+        _, returned_session_id = await agent.run(
+            user_id="user-1",
+            session_id=None,
+            message="hello",
+            scene="cafe",
+            emotion="happy",
+        )
+
+        agent._adk_app.async_create_session.assert_called_once_with(
+            user_id="user-1", state={"user_id": "user-1"}
+        )
+        assert returned_session_id == "new-session"
+
+    async def test_does_not_create_session_when_id_provided(
+        self, character_config: CharacterConfig
+    ) -> None:
+        """run() should NOT call async_create_session when session_id is given."""
+        agent = self._make_agent(character_config)
+        agent._adk_app = self._make_adk_app()
+
+        await agent.run(
+            user_id="user-1",
+            session_id="existing-session",
+            message="hello",
+            scene="cafe",
+            emotion="happy",
+        )
+
+        agent._adk_app.async_create_session.assert_not_called()
+
+    async def test_returns_provided_session_id_unchanged(
+        self, character_config: CharacterConfig
+    ) -> None:
+        """run() should return the same session_id that was passed in."""
+        agent = self._make_agent(character_config)
+        agent._adk_app = self._make_adk_app()
+
+        _, returned_id = await agent.run(
+            user_id="user-1",
+            session_id="keep-me",
+            message="hello",
+            scene="indoor",
+            emotion="neutral",
+        )
+
+        assert returned_id == "keep-me"
+
+    async def test_returns_structured_response_from_model_event(
+        self, character_config: CharacterConfig
+    ) -> None:
+        """run() should parse the model event text into StructuredResponse."""
+        import json
         from app.models.conversation import StructuredResponse
 
-        chat_agent = ChatAgent(
-            "test-project", "us-central1", "test-engine", character_config
+        payload = json.dumps(
+            {
+                "dialogue": "こんにちは！",
+                "narration": "あかりは微笑んだ。",
+                "emotion": "happy",
+                "scene": "cafe",
+                "affinity_level": 30,
+            }
         )
-        chat_agent.initialize()
+        # Deployed Agent Engine format: model events carry "model_version"
+        model_event = {"model_version": "gemini-3.1-pro-preview", "content": {"parts": [{"text": payload}]}}
 
-        from unittest.mock import MagicMock
+        agent = self._make_agent(character_config)
+        agent._adk_app = self._make_adk_app(events=[model_event])
 
-        assert isinstance(mock_agent, MagicMock)
-        config = mock_agent.call_args.kwargs["generate_content_config"]  # type: ignore[attr-defined]
-        expected_schema = StructuredResponse.model_json_schema()
-        assert config.response_schema == expected_schema
+        response, _ = await agent.run(
+            user_id="user-1",
+            session_id="s",
+            message="hello",
+            scene="cafe",
+            emotion="happy",
+        )
 
-    @patch("app.services.agent.VertexAiSessionService")
-    @patch("app.services.agent.VertexAiMemoryBankService")
-    @patch("app.services.agent.Runner")
-    @patch("app.services.agent.Agent")
-    def test_agent_has_preload_memory_tool(
-        self,
-        mock_agent: object,
-        mock_runner: object,
-        mock_memory: object,
-        mock_session: object,
-        character_config: CharacterConfig,
+        assert isinstance(response, StructuredResponse)
+        assert response.dialogue == "こんにちは！"
+        assert response.affinity_level == 30
+
+    async def test_ignores_non_model_events(
+        self, character_config: CharacterConfig
     ) -> None:
-        """Agent should have PreloadMemoryTool configured."""
-        from app.services.agent import ChatAgent
-        from google.adk.tools.preload_memory_tool import PreloadMemoryTool
+        """run() should ignore tool-call and other non-model events."""
+        import json
+        from app.models.conversation import StructuredResponse
 
-        chat_agent = ChatAgent(
-            "test-project", "us-central1", "test-engine", character_config
+        payload = json.dumps(
+            {
+                "dialogue": "返答です",
+                "narration": "",
+                "emotion": "neutral",
+                "scene": "indoor",
+                "affinity_level": 10,
+            }
         )
-        chat_agent.initialize()
+        events = [
+            # non-model event (function_response): has role="user", no model_version
+            {"content": {"role": "user", "parts": [{"text": "tool call"}]}},
+            # model text event: has model_version, no role in content
+            {"model_version": "gemini-3.1-pro-preview", "content": {"parts": [{"text": payload}]}},
+        ]
 
-        from unittest.mock import MagicMock
+        agent = self._make_agent(character_config)
+        agent._adk_app = self._make_adk_app(events=events)
 
-        assert isinstance(mock_agent, MagicMock)
-        tools = mock_agent.call_args.kwargs["tools"]  # type: ignore[attr-defined]
-        assert any(isinstance(t, PreloadMemoryTool) for t in tools)
+        response, _ = await agent.run(
+            user_id="u", session_id="s", message="hi", scene="indoor", emotion="neutral"
+        )
 
-    @patch("app.services.agent.VertexAiSessionService")
-    @patch("app.services.agent.VertexAiMemoryBankService")
-    @patch("app.services.agent.Runner")
-    @patch("app.services.agent.Agent")
-    def test_agent_has_load_memory_tool(
-        self,
-        mock_agent: object,
-        mock_runner: object,
-        mock_memory: object,
-        mock_session: object,
-        character_config: CharacterConfig,
+        assert isinstance(response, StructuredResponse)
+        assert response.dialogue == "返答です"
+
+    async def test_fallback_on_empty_stream(
+        self, character_config: CharacterConfig
     ) -> None:
-        """Agent should have LoadMemoryTool configured."""
-        from app.services.agent import ChatAgent
-        from google.adk.tools.load_memory_tool import LoadMemoryTool
+        """run() should return fallback StructuredResponse when stream has no model event."""
+        from app.models.conversation import StructuredResponse
 
-        chat_agent = ChatAgent(
-            "test-project", "us-central1", "test-engine", character_config
-        )
-        chat_agent.initialize()
+        agent = self._make_agent(character_config)
+        agent._adk_app = self._make_adk_app(events=[])
 
-        from unittest.mock import MagicMock
-
-        assert isinstance(mock_agent, MagicMock)
-        tools = mock_agent.call_args.kwargs["tools"]  # type: ignore[attr-defined]
-        assert any(isinstance(t, LoadMemoryTool) for t in tools)
-
-    @patch("app.services.agent.VertexAiSessionService")
-    @patch("app.services.agent.VertexAiMemoryBankService")
-    @patch("app.services.agent.Runner")
-    @patch("app.services.agent.Agent")
-    def test_memory_service_initialized_with_config(
-        self,
-        mock_agent: object,
-        mock_runner: object,
-        mock_memory: object,
-        mock_session: object,
-        character_config: CharacterConfig,
-    ) -> None:
-        """VertexAiMemoryBankService should be initialized with project config."""
-        from app.services.agent import ChatAgent
-        from unittest.mock import MagicMock
-
-        chat_agent = ChatAgent("my-project", "us-central1", "engine-abc", character_config)
-        chat_agent.initialize()
-
-        assert isinstance(mock_memory, MagicMock)
-        mock_memory.assert_called_once_with(  # type: ignore[attr-defined]
-            project="my-project",
-            location="us-central1",
-            agent_engine_id="engine-abc",
+        response, _ = await agent.run(
+            user_id="u", session_id="s", message="hi", scene="indoor", emotion="neutral"
         )
 
-    @patch("app.services.agent.VertexAiSessionService")
-    @patch("app.services.agent.VertexAiMemoryBankService")
-    @patch("app.services.agent.Runner")
-    @patch("app.services.agent.Agent")
-    def test_session_service_initialized_with_config(
-        self,
-        mock_agent: object,
-        mock_runner: object,
-        mock_memory: object,
-        mock_session: object,
-        character_config: CharacterConfig,
-    ) -> None:
-        """VertexAiSessionService should be initialized with project config."""
-        from app.services.agent import ChatAgent
-        from unittest.mock import MagicMock
-
-        chat_agent = ChatAgent("my-project", "us-central1", "engine-abc", character_config)
-        chat_agent.initialize()
-
-        assert isinstance(mock_session, MagicMock)
-        mock_session.assert_called_once_with(  # type: ignore[attr-defined]
-            project="my-project",
-            location="us-central1",
-            agent_engine_id="engine-abc",
-        )
+        assert isinstance(response, StructuredResponse)
 
 
 # ---------------------------------------------------------------------------
@@ -474,12 +507,14 @@ class TestBuildAgent:
     def test_uses_correct_model(
         self, mock_agent_cls: MagicMock, character_config: CharacterConfig
     ) -> None:
-        """build_agent() should use the configured MODEL_ID."""
-        from app.services.agent import build_agent, MODEL_ID
+        """build_agent() should use _Gemini3Global wrapping the configured MODEL_ID."""
+        from app.services.agent import build_agent, MODEL_ID, _Gemini3Global
 
         build_agent(character_config)
 
-        assert mock_agent_cls.call_args.kwargs["model"] == MODEL_ID
+        model_arg = mock_agent_cls.call_args.kwargs["model"]
+        assert isinstance(model_arg, _Gemini3Global)
+        assert model_arg.model == MODEL_ID
 
     @patch("app.services.agent.Agent")
     def test_includes_preload_memory_tool(
@@ -527,14 +562,179 @@ class TestBuildAgent:
         assert any(isinstance(t, LoadMemoryTool) for t in tools)
 
     @patch("app.services.agent.Agent")
-    def test_has_json_response_config(
+    def test_uses_output_schema(
         self, mock_agent_cls: MagicMock, character_config: CharacterConfig
     ) -> None:
-        """build_agent() should configure JSON response schema."""
+        """build_agent() should use output_schema=StructuredResponse (not generate_content_config)."""
         from app.services.agent import build_agent
+        from app.models.conversation import StructuredResponse
 
         build_agent(character_config)
 
-        config = mock_agent_cls.call_args.kwargs["generate_content_config"]
-        assert config.response_mime_type == "application/json"
-        assert config.response_schema is not None
+        assert mock_agent_cls.call_args.kwargs["output_schema"] is StructuredResponse
+        assert "generate_content_config" not in mock_agent_cls.call_args.kwargs
+
+
+# ---------------------------------------------------------------------------
+# _parse_response Tests (Task 3.3)
+# ---------------------------------------------------------------------------
+
+
+class TestParseResponse:
+    """Direct tests for the module-level _parse_response() function."""
+
+    def test_valid_json_returns_structured_response(self) -> None:
+        """Valid JSON should be parsed into a StructuredResponse."""
+        import json
+        from app.services.agent import _parse_response
+        from app.models.conversation import StructuredResponse
+
+        payload = json.dumps(
+            {
+                "dialogue": "こんにちは",
+                "narration": "微笑む",
+                "emotion": "happy",
+                "scene": "cafe",
+                "affinity_level": 42,
+            }
+        )
+
+        result = _parse_response(payload)
+
+        assert isinstance(result, StructuredResponse)
+        assert result.dialogue == "こんにちは"
+        assert result.narration == "微笑む"
+        assert result.affinity_level == 42
+
+    def test_valid_json_preserves_emotion(self) -> None:
+        """Parsed response should preserve the emotion field."""
+        import json
+        from app.services.agent import _parse_response
+        from app.models.conversation import Emotion
+
+        payload = json.dumps(
+            {
+                "dialogue": "x",
+                "narration": "",
+                "emotion": "sad",
+                "scene": "indoor",
+                "affinity_level": 10,
+            }
+        )
+
+        result = _parse_response(payload)
+        assert result.emotion == Emotion.sad
+
+    def test_valid_json_preserves_scene(self) -> None:
+        """Parsed response should preserve the scene field."""
+        import json
+        from app.services.agent import _parse_response
+        from app.models.conversation import Scene
+
+        payload = json.dumps(
+            {
+                "dialogue": "x",
+                "narration": "",
+                "emotion": "neutral",
+                "scene": "park",
+                "affinity_level": 0,
+            }
+        )
+
+        result = _parse_response(payload)
+        assert result.scene == Scene.park
+
+    def test_invalid_json_returns_fallback(self) -> None:
+        """Non-JSON string should trigger fallback StructuredResponse."""
+        from app.services.agent import _parse_response
+        from app.models.conversation import StructuredResponse
+
+        result = _parse_response("this is not json")
+
+        assert isinstance(result, StructuredResponse)
+
+    def test_fallback_emotion_is_neutral(self) -> None:
+        """Fallback response should have emotion=neutral."""
+        from app.services.agent import _parse_response
+        from app.models.conversation import Emotion
+
+        result = _parse_response("invalid json")
+
+        assert result.emotion == Emotion.neutral
+
+    def test_fallback_scene_is_indoor(self) -> None:
+        """Fallback response should have scene=indoor."""
+        from app.services.agent import _parse_response
+        from app.models.conversation import Scene
+
+        result = _parse_response("invalid json")
+
+        assert result.scene == Scene.indoor
+
+    def test_fallback_affinity_level_is_zero(self) -> None:
+        """Fallback response should have affinity_level=0."""
+        from app.services.agent import _parse_response
+
+        result = _parse_response("invalid json")
+
+        assert result.affinity_level == 0
+
+    def test_empty_string_returns_fallback(self) -> None:
+        """Empty string should trigger fallback with '...' as dialogue."""
+        from app.services.agent import _parse_response
+
+        result = _parse_response("")
+
+        assert result.dialogue == "..."
+
+    def test_invalid_json_uses_text_as_dialogue(self) -> None:
+        """Non-JSON text should be used as dialogue in the fallback."""
+        from app.services.agent import _parse_response
+
+        result = _parse_response("エラーテキスト")
+
+        assert result.dialogue == "エラーテキスト"
+
+    def test_missing_required_field_returns_fallback(self) -> None:
+        """JSON missing required fields should trigger fallback."""
+        import json
+        from app.services.agent import _parse_response
+        from app.models.conversation import Emotion
+
+        # 'affinity_level' is required but omitted
+        payload = json.dumps(
+            {"dialogue": "hi", "narration": "", "emotion": "happy", "scene": "cafe"}
+        )
+
+        result = _parse_response(payload)
+
+        assert result.emotion == Emotion.neutral  # fallback
+
+    def test_out_of_range_affinity_returns_fallback(self) -> None:
+        """affinity_level outside 0-100 should fail validation → fallback."""
+        import json
+        from app.services.agent import _parse_response
+
+        payload = json.dumps(
+            {
+                "dialogue": "hi",
+                "narration": "",
+                "emotion": "happy",
+                "scene": "cafe",
+                "affinity_level": 999,
+            }
+        )
+
+        result = _parse_response(payload)
+
+        assert result.affinity_level == 0  # fallback
+
+    def test_logs_error_on_parse_failure(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Parse failure should emit an error-level log."""
+        import logging
+        from app.services.agent import _parse_response
+
+        with caplog.at_level(logging.ERROR, logger="app.services.agent"):
+            _parse_response("not valid json at all")
+
+        assert any("Failed to parse" in r.message for r in caplog.records)

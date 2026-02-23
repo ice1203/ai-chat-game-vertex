@@ -80,7 +80,7 @@
   - StructuredResponseを更新: `affinityChange` / `isImportantEvent` / `eventSummary` を削除 → `affinity_level`（ツール呼び出し後の現在値）を追加
   - _Requirements: 4.1, 4.4, 5.1, 5.2, 5.3, 5.4, 5.6_
 
-- [ ] 3.2 デプロイ済みAdkAppを使ったChatAgentのリファクタリング (前提: 0.3完了)
+- [x] 3.2 デプロイ済みAdkAppを使ったChatAgentのリファクタリング (前提: 0.3完了)
   - `ChatAgent.initialize()` を `Runner`+`VertexAiSessionService` から `vertexai.Client.agent_engines.get()` ベースに変更
   - `ChatAgent.run()` のセッション管理を `adk_app.async_create_session(user_id)` に変更（session["id"] でID取得）
   - `runner.run_async(user_id, session_id, new_message)` → `adk_app.async_stream_query(user_id, session_id, message)` に変更
@@ -90,14 +90,14 @@
   - `ChatAgent.run()` の引数から `affinity_level` を削除（initialize_sessionツールがセッション開始時に取得するため。2ターン目以降はStructuredResponseの`affinity_level`をContextに引き継ぐ）
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 4.2, 4.3, 6.1_
 
-- [ ] 3.3 JSONパースとエラーハンドリングの実装 (前提: 3.2完了後に見直し)
+- [x] 3.3 JSONパースとエラーハンドリングの実装 (前提: 3.2完了後に見直し)
   - `async_stream_query` の dict イベントから最終テキストを取得するロジックの確認・調整
   - 構造化レスポンスのJSONパース処理（既存の `_parse_response()` ロジックを流用）
   - JSONパース失敗時のデフォルト値フォールバック（感情: neutral、シーン: indoor、画像更新フラグ: false、重要イベントフラグ: false）
   - エラーログ記録
   - _Requirements: 6.2, 8.3_
 
-- [ ] 3.4 ChatAgent単体動作確認（デプロイ済みエージェントを使用）
+- [x] 3.4 ChatAgent単体動作確認（デプロイ済みエージェントを使用）
   - デプロイ済みAgent Engineに対して直接呼び出し、構造化レスポンスが返却されることを確認
   - セリフ・感情・シーン・画像更新フラグ・親密度変化量・重要イベントフラグ・イベントサマリーの全フィールドが期待する型・値で返ること確認
   - 複数ターンの会話で同一Sessionが維持されていることを確認（async_list_sessions で確認）
@@ -105,30 +105,30 @@
   - JSONパース失敗時にデフォルト値でフォールバックされることを確認（不正な応答を模擬）
   - _Requirements: 3.1, 3.2, 6.1, 6.2_
 
-- [ ] 4. カスタムツールの動作確認 (前提: 3.1.5完了, 0.3完了)
+- [x] 4. カスタムツールの動作確認 (前提: 3.1.5完了, 0.3完了)
   - ※ MemoryManager・親密度管理のロジックはタスク3.1.5のカスタムツール（agent_tools.py）に移行済み。このタスクはデプロイ後の動作確認。
 
-- [ ] 4.1 initialize_sessionツールの動作確認
+- [x] 4.1 initialize_sessionツールの動作確認
   - デプロイ済みエージェントにメッセージを送信し、initialize_sessionが呼ばれることをトレースログで確認
   - 初回セッション: affinity_level=0、days_since_last_session=None が返ることを確認
   - 2回目以降: Firestoreから正しい親密度・経過日数が返ることを確認
   - last_updatedがFirestoreに書き込まれることを確認
   - _Requirements: 5.1, 5.3, 5.4_
 
-- [ ] 4.2 update_affinityツールの動作確認
+- [x] 4.2 update_affinityツールの動作確認
   - 会話ターン後にupdate_affinityが呼ばれることをトレースログで確認
   - Firestoreの親密度が正しく更新されることを確認
   - 0-100の範囲外への変化がクランプされることを確認
   - StructuredResponseの `affinity_level` フィールドに更新後の値が反映されることを確認
   - _Requirements: 5.1, 5.3_
 
-- [ ] 4.3 save_to_memoryツールの動作確認
+- [x] 4.3 save_to_memoryツールの動作確認
   - 重要な情報（好みや出来事）を含む会話をし、save_to_memoryが呼ばれることをトレースログで確認
   - Memory Bankに記憶が保存されることを確認
   - 次の新しいSessionで保存した記憶がPreloadMemoryToolで読み込まれることを確認
   - _Requirements: 4.1, 4.4_
 
-- [ ] 5. (P) ImageGenerationServiceの実装と動作確認 (前提: 1.1, 2.2)
+- [x] 5. (P) ImageGenerationServiceの実装と動作確認 (前提: 1.1, 2.2)
 
 - [x] 5.1 画像生成プロンプト構築ロジックの実装
   - `data/characters/character.json` の `appearance_prompt` を読み込み、感情・シーンを組み合わせた最終プロンプトを生成（例: `{appearance_prompt}, happy expression, cafe background`）
@@ -189,7 +189,7 @@
   - 連続2〜3ターンの会話でSessionが維持されていることを確認
   - _Requirements: 2.1, 2.2, 1.3, 3.1, 3.2, 4.1, 8.1_
 
-- [ ] 8. (P) フロントエンド型定義とChatContextの実装 (前提: 2.1)
+- [x] 8. (P) フロントエンド型定義とChatContextの実装 (前提: 2.1)
 
 - [x] 8.1 TypeScript型定義の実装
   - 会話リクエスト・レスポンス、メッセージ、チャット状態、コンテキスト値のインターフェース定義

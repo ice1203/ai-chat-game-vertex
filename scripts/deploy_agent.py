@@ -11,6 +11,7 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -69,14 +70,21 @@ def deploy(update: bool = False) -> None:
     )
     app = AdkApp(agent=agent)
 
+    # tarball のパスを backend/ 相対にするためカレントディレクトリを変更
+    os.chdir(str(_BACKEND_PATH))
+
     if update:
         # コード変更後の再デプロイ
         existing = vertexai.agent_engines.get(settings.agent_engine_id)
-        existing.update(app)
+        existing.update(app, extra_packages=["app"])
         print(f"Updated Agent Engine: {settings.agent_engine_id}")
     else:
         # 初回デプロイ
-        deployed = vertexai.agent_engines.create(app, requirements=REQUIREMENTS)
+        deployed = vertexai.agent_engines.create(
+            app,
+            requirements=REQUIREMENTS,
+            extra_packages=["app"],
+        )
         agent_engine_id = deployed.resource_name.split("/")[-1]
         print(f"Deployed Agent Engine ID: {agent_engine_id}")
         print(f".env を更新してください: AGENT_ENGINE_ID={agent_engine_id}")

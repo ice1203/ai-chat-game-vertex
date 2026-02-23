@@ -1,16 +1,20 @@
-"""ChatAgent service and build_agent factory using ADK framework (Task 3.1, 3.1.5)."""
+"""ChatAgent service and build_agent factory using ADK framework (Task 3.1, 3.1.5, 3.2)."""
+import json
 import logging
-from typing import Optional
+import os
+from typing import Any, Optional
 
-from google.adk import Agent, Runner
+import vertexai
+import vertexai.agent_engines  # ensure submodule is loaded for vertexai.agent_engines.get()
+from google.adk import Agent
 from google.adk.agents.callback_context import CallbackContext
-from google.adk.memory import VertexAiMemoryBankService
-from google.adk.sessions import VertexAiSessionService
+from google.adk.models import Gemini
 from google.adk.tools.load_memory_tool import LoadMemoryTool
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
-from google.genai import types
+from google.genai import Client
+from google.genai import types as genai_types
 
-from app.models.conversation import StructuredResponse
+from app.models.conversation import Emotion, Scene, StructuredResponse
 from app.models.image import CharacterConfig
 
 logger = logging.getLogger(__name__)
@@ -18,7 +22,31 @@ logger = logging.getLogger(__name__)
 MODEL_ID = "gemini-3.1-pro-preview"
 
 
-async def _noop_after_agent_callback(_callback_context: CallbackContext) -> None:
+class _Gemini3Global(Gemini):
+    """Gemini 3 wrapper that forces the global endpoint.
+
+    Agent Engine overrides GOOGLE_CLOUD_LOCATION to the deployment region
+    (e.g. us-central1), but Gemini 3 models are only available on the global
+    endpoint.  By overriding api_client we bypass the environment variable and
+    always connect to location='global'.
+
+    Reference: https://github.com/google/adk-python/issues/3628#issuecomment-…
+    """
+
+    @property
+    def api_client(self) -> Client:
+        project = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT_ID", "")
+        return Client(
+            project=project,
+            location="global",
+            http_options=genai_types.HttpOptions(
+                headers=self._tracking_headers(),
+                retry_options=self.retry_options,
+            ),
+        )
+
+
+async def _noop_after_agent_callback(callback_context: CallbackContext) -> None:
     """No-op after-agent callback.
 
     State management (affinity, memory) is handled by the custom tools
@@ -32,9 +60,9 @@ def _build_system_instructions(character_config: CharacterConfig) -> str:
     """Build system instructions for the character agent.
 
     Includes character settings, field meaning explanations, and tool usage
-    guidelines.  JSON schema syntax is intentionally excluded because the
-    response_schema in generate_content_config enforces structure at the API
-    level; duplicating schema in the prompt degrades output quality.
+    guidelines.  JSON schema syntax is intentionally excluded because
+    output_schema enforces structure at the API level; duplicating schema
+    in the prompt degrades output quality.
 
     Args:
         character_config: Character configuration (name, personality, etc.).
@@ -66,10 +94,33 @@ def _build_system_instructions(character_config: CharacterConfig) -> str:
 
 ## 重要な注意事項
 
-- 毎ターンのメッセージに現在の親密度・シーン・感情が渡されます。それを参考に応答してください。
+- 毎ターンのメッセージに現在のシーン・感情が渡されます。それを参考に応答してください。
 - 親密度レベルに応じて口調を変えてください（0〜30: 敬語・よそよそしい、31〜70: 友好的・自然、71〜100: 親しみやすい・フレンドリー）。
 - 常にキャラクターとして振る舞い、AIであることを明かさないでください。
 """
+
+
+def _parse_response(response_text: str) -> StructuredResponse:
+    """Parse JSON response text into StructuredResponse with fallback defaults.
+
+    Args:
+        response_text: Raw text from the agent's final response event.
+
+    Returns:
+        Parsed StructuredResponse, or a safe default on any parse failure.
+    """
+    try:
+        data = json.loads(response_text)
+        return StructuredResponse(**data)
+    except Exception:
+        logger.error("Failed to parse agent response: %.200s", response_text)
+        return StructuredResponse(
+            dialogue=response_text or "...",
+            narration="",
+            emotion=Emotion.neutral,
+            scene=Scene.indoor,
+            affinity_level=0,
+        )
 
 
 def build_agent(
@@ -78,8 +129,8 @@ def build_agent(
 ) -> Agent:
     """Build and return a configured ADK Agent instance.
 
-    This module-level factory is used both by ChatAgent.initialize() and by
-    scripts/deploy_agent.py so that the same agent definition is shared
+    This module-level factory is used both by ChatAgent (via deploy_agent.py)
+    and by scripts/deploy_agent.py so that the same agent definition is shared
     between local (Runner-based) and cloud (Agent Engine) contexts.
 
     Args:
@@ -97,28 +148,26 @@ def build_agent(
 
     return Agent(
         name="character_agent",
-        model=MODEL_ID,
+        model=_Gemini3Global(model=MODEL_ID),
         instruction=_build_system_instructions(character_config),
         after_agent_callback=_noop_after_agent_callback,
         tools=tools,
-        generate_content_config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=StructuredResponse.model_json_schema(),
-        ),
+        output_schema=StructuredResponse,
     )
 
 
 class ChatAgent:
-    """ADK-based chat agent with Memory Bank and Session integration.
+    """ADK-based chat agent backed by a deployed Vertex AI Agent Engine.
 
     Responsibilities:
-    - Initialize ADK Agent via build_agent() with correct model, tools, and
-      response schema
-    - Build context-enriched user messages (affinity/scene/emotion per turn)
+    - Connect to the deployed Agent Engine via vertexai.agent_engines.get()
+    - Manage Sessions (create on first turn, reuse on subsequent turns)
+    - Build context-enriched user messages (scene/emotion per turn)
+    - Parse structured JSON responses into StructuredResponse
 
-    Note: Session management is handled by VertexAiSessionService (Runner).
-    State updates (affinity, memory) are handled by custom tools inside the
-    deployed Agent Engine.
+    Note: State updates (affinity, memory) are handled by custom tools
+    (initialize_session, update_affinity, save_to_memory) running inside
+    the deployed Agent Engine.
     """
 
     def __init__(
@@ -133,33 +182,16 @@ class ChatAgent:
         self.agent_engine_id = agent_engine_id
         self.character_config = character_config
 
-        self._agent: Optional[Agent] = None
-        self._runner: Optional[Runner] = None
-        self._session_service: Optional[VertexAiSessionService] = None
-        self._memory_service: Optional[VertexAiMemoryBankService] = None
+        self._adk_app: Optional[Any] = None
 
     def initialize(self) -> None:
-        """Initialize ADK agent, runner, and cloud services.
+        """Connect to the deployed Agent Engine.
 
-        Creates VertexAiMemoryBankService and VertexAiSessionService, then
-        builds the Agent via build_agent() and wires all three into Runner.
+        Calls vertexai.init() and then retrieves the deployed AgentEngine
+        object via vertexai.agent_engines.get().  Must be called before run().
         """
-        self._memory_service = VertexAiMemoryBankService(
-            project=self.project_id,
-            location=self.location,
-            agent_engine_id=self.agent_engine_id,
-        )
-        self._session_service = VertexAiSessionService(
-            project=self.project_id,
-            location=self.location,
-            agent_engine_id=self.agent_engine_id,
-        )
-        self._agent = build_agent(self.character_config)
-        self._runner = Runner(
-            agent=self._agent,
-            session_service=self._session_service,
-            memory_service=self._memory_service,
-        )
+        vertexai.init(project=self.project_id, location=self.location)
+        self._adk_app = vertexai.agent_engines.get(self.agent_engine_id)
 
     def _build_system_instructions(self) -> str:
         """Build system instructions for this agent's character config.
@@ -172,19 +204,18 @@ class ChatAgent:
     def _build_context_message(
         self,
         user_message: str,
-        affinity_level: int,
         scene: str,
         emotion: str,
     ) -> str:
         """Build context-enriched user message.
 
-        Dynamic state (affinity, scene, emotion) is injected into the message
-        each turn rather than into the system prompt, since these values change
-        during the conversation.
+        Dynamic state (scene, emotion) is injected into the message each turn.
+        user_id is NOT included here — it is stored in session state at
+        session creation time and retrieved by tools via ToolContext.state,
+        so the LLM never needs to handle it.
 
         Args:
             user_message: The original message from the user.
-            affinity_level: Current affinity level (0-100).
             scene: Current scene identifier (e.g. "cafe", "indoor").
             emotion: Current emotion identifier (e.g. "happy", "neutral").
 
@@ -192,7 +223,71 @@ class ChatAgent:
             Formatted message combining state context and user message.
         """
         return f"""[現在の状態]
-親密度: {affinity_level} / シーン: {scene} / 感情: {emotion}
+シーン: {scene} / 感情: {emotion}
 
 [ユーザーメッセージ]
 {user_message}"""
+
+    async def run(
+        self,
+        user_id: str,
+        session_id: Optional[str],
+        message: str,
+        scene: str,
+        emotion: str,
+    ) -> tuple[StructuredResponse, str]:
+        """Run one conversation turn against the deployed Agent Engine.
+
+        Creates a new session on the first turn (session_id=None) and reuses
+        the existing session on subsequent turns.
+
+        Args:
+            user_id: The user identifier.
+            session_id: Existing session ID, or None to create a new session.
+            message: The user's raw message text.
+            scene: Current scene identifier (passed as context).
+            emotion: Current emotion identifier (passed as context).
+
+        Returns:
+            Tuple of (StructuredResponse, session_id).
+        """
+        assert self._adk_app is not None, "Call initialize() before run()"
+
+        # Create a new session on the first turn.
+        # user_id is stored in session state so tools can retrieve it via
+        # ToolContext.state["user_id"] without relying on LLM-generated args.
+        if session_id is None:
+            session = await self._adk_app.async_create_session(
+                user_id=user_id,
+                state={"user_id": user_id},
+            )
+            # The deployed Agent Engine returns a dict; local SDK returns a Pydantic model
+            session_id = session["id"] if isinstance(session, dict) else session.id
+
+        context_message = self._build_context_message(
+            user_message=message,
+            scene=scene,
+            emotion=emotion,
+        )
+
+        # Collect the final model text from the streaming response.
+        # Deployed Agent Engine events with text from the model have
+        # "model_version" at the top level (no content.role=="model").
+        response_text = ""
+        async for event in self._adk_app.async_stream_query(
+            user_id=user_id,
+            session_id=session_id,
+            message=context_message,
+        ):
+            if not isinstance(event, dict):
+                continue
+            # Model text events carry "model_version"; skip error events
+            if "model_version" not in event:
+                continue
+            for part in event.get("content", {}).get("parts", []):
+                if isinstance(part, dict) and "text" in part:
+                    response_text = part["text"]
+
+        structured = _parse_response(response_text)
+        assert session_id is not None
+        return structured, session_id

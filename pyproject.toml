@@ -25,3 +25,8 @@ dev = [
 testpaths = ["backend/tests"]
 pythonpath = ["backend"]
 asyncio_mode = "auto"
+addopts = ["-m", "not integration"]
+markers = [
+    "integration: marks tests as integration tests against real GCP services (skipped by default; run with -m integration)",
+    "timeout: set a timeout in seconds for a test (requires pytest-timeout)",
+]
