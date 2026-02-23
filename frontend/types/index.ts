@@ -50,3 +50,20 @@ export interface ChatContextValue {
   sendMessage: (message: string) => Promise<void>
   clearHistory: () => void
 }
+
+/** Props for CharacterImageDisplay component */
+export interface CharacterImageDisplayProps {
+  imageUrl: string
+  isGenerating: boolean
+}
+
+/** Props for ConversationLog component */
+export interface ConversationLogProps {
+  messages: Message[]
+}
+
+/** Props for MessageInput component */
+export interface MessageInputProps {
+  onSend: (message: string) => void
+  isLoading: boolean
+}
