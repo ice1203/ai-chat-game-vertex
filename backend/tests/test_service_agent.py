@@ -16,78 +16,45 @@ def character_config() -> CharacterConfig:
 
 
 # ---------------------------------------------------------------------------
-# _build_context_message Tests (Task 3.2: affinity_level removed from args)
+# _build_context_message Tests
 # ---------------------------------------------------------------------------
 
 
 class TestBuildContextMessage:
     """Tests for _build_context_message method."""
 
-    def test_includes_scene(self, character_config: CharacterConfig) -> None:
-        """Context message should contain the current scene."""
+    def _build(self, character_config: CharacterConfig, **kwargs: object) -> str:
         from app.services.agent import ChatAgent
 
         agent = ChatAgent("p", "l", "e", character_config)
-        msg = agent._build_context_message(
-            user_message="こんにちは",
-            scene="cafe",
-            emotion="neutral",
-        )
+        defaults = dict(user_message="hello", scene="cafe", emotion="neutral", affinity_level=0)
+        defaults.update(kwargs)
+        return agent._build_context_message(**defaults)  # type: ignore[arg-type]
 
-        assert "cafe" in msg
+    def test_includes_scene(self, character_config: CharacterConfig) -> None:
+        """Context message should contain the current scene."""
+        assert "cafe" in self._build(character_config, scene="cafe")
 
     def test_includes_emotion(self, character_config: CharacterConfig) -> None:
         """Context message should contain the current emotion."""
-        from app.services.agent import ChatAgent
+        assert "happy" in self._build(character_config, emotion="happy")
 
-        agent = ChatAgent("p", "l", "e", character_config)
-        msg = agent._build_context_message(
-            user_message="こんにちは",
-            scene="indoor",
-            emotion="happy",
-        )
-
-        assert "happy" in msg
+    def test_includes_affinity_level(self, character_config: CharacterConfig) -> None:
+        """Context message should contain the current affinity level."""
+        assert "42" in self._build(character_config, affinity_level=42)
 
     def test_includes_user_message(self, character_config: CharacterConfig) -> None:
         """Context message should contain the original user message."""
-        from app.services.agent import ChatAgent
-
-        agent = ChatAgent("p", "l", "e", character_config)
         user_msg = "好きな食べ物は何ですか？"
-        msg = agent._build_context_message(
-            user_message=user_msg,
-            scene="cafe",
-            emotion="happy",
-        )
-
-        assert user_msg in msg
+        assert user_msg in self._build(character_config, user_message=user_msg)
 
     def test_returns_string(self, character_config: CharacterConfig) -> None:
         """Context message should be a plain string (not types.Content)."""
-        from app.services.agent import ChatAgent
-
-        agent = ChatAgent("p", "l", "e", character_config)
-        msg = agent._build_context_message(
-            user_message="hello",
-            scene="indoor",
-            emotion="neutral",
-        )
-
-        assert isinstance(msg, str)
+        assert isinstance(self._build(character_config), str)
 
     def test_does_not_include_user_id(self, character_config: CharacterConfig) -> None:
         """Context message should NOT include user_id (stored in session state instead)."""
-        from app.services.agent import ChatAgent
-
-        agent = ChatAgent("p", "l", "e", character_config)
-        msg = agent._build_context_message(
-            user_message="hello",
-            scene="indoor",
-            emotion="neutral",
-        )
-
-        assert "ユーザーID" not in msg
+        assert "ユーザーID" not in self._build(character_config)
 
 
 # ---------------------------------------------------------------------------
@@ -437,16 +404,16 @@ class TestSystemInstructionsToolGuidelines:
 
         assert "initialize_session" in instructions
 
-    def test_includes_update_affinity_guideline(
+    def test_does_not_include_update_affinity_tool(
         self, character_config: CharacterConfig
     ) -> None:
-        """System instructions should guide the model to call update_affinity."""
+        """update_affinity is handled by ConversationService — not a tool anymore."""
         from app.services.agent import ChatAgent
 
         agent = ChatAgent("p", "l", "e", character_config)
         instructions = agent._build_system_instructions()
 
-        assert "update_affinity" in instructions
+        assert "update_affinity" not in instructions
 
     def test_includes_save_to_memory_guideline(
         self, character_config: CharacterConfig

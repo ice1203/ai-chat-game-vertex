@@ -26,7 +26,7 @@ from vertexai.agent_engines import AdkApp
 from app.core.config import get_settings
 from app.models.image import CharacterConfig
 from app.services.agent import build_agent
-from app.services.agent_tools import initialize_session, save_to_memory, update_affinity
+from app.services.agent_tools import initialize_session, save_to_memory
 
 # Agent Engine へのデプロイに必要なパッケージ
 REQUIREMENTS = [
@@ -66,7 +66,7 @@ def deploy(update: bool = False) -> None:
     character_config = load_character_config()
     agent = build_agent(
         character_config=character_config,
-        extra_tools=[initialize_session, update_affinity, save_to_memory],
+        extra_tools=[initialize_session, save_to_memory],
     )
     app = AdkApp(agent=agent)
 
@@ -76,7 +76,11 @@ def deploy(update: bool = False) -> None:
     if update:
         # コード変更後の再デプロイ
         existing = vertexai.agent_engines.get(settings.agent_engine_id)
-        existing.update(app, extra_packages=["app"])
+        existing.update(
+            agent_engine=app,
+            extra_packages=["app"],
+            env_vars={"AGENT_ENGINE_ID": settings.agent_engine_id},
+        )
         print(f"Updated Agent Engine: {settings.agent_engine_id}")
     else:
         # 初回デプロイ

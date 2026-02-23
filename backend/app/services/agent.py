@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import time
 from typing import Any, Optional
 
 import vertexai
@@ -14,12 +15,13 @@ from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 from google.genai import Client
 from google.genai import types as genai_types
 
+from app.core.logging import setup_logging
 from app.models.conversation import Emotion, Scene, StructuredResponse
 from app.models.image import CharacterConfig
 
-logger = logging.getLogger(__name__)
+logger = setup_logging("agent")
 
-MODEL_ID = "gemini-3.1-pro-preview"
+MODEL_ID = "gemini-3-flash-preview"
 
 
 class _Gemini3Global(Gemini):
@@ -84,17 +86,16 @@ def _build_system_instructions(character_config: CharacterConfig) -> str:
 - narration: 三人称の短い情景描写を書いてください（例: 「{char.name}は微笑みながら答えた。」）。
 - emotion: このターンの{char.name}の感情を1つ選んでください（happy / sad / neutral / surprised / thoughtful / embarrassed / excited / angry）。
 - scene: 現在の場所を1つ選んでください（indoor / outdoor / cafe / park / school / home）。
-- affinity_level: update_affinityツールを呼んだ後の現在の親密度レベル（0-100）を入れてください。
+- affinity_level: コンテキストメッセージの「親密度」を基に、今回の会話の流れを反映した新しい値を設定してください（楽しい会話は+3〜+5、普通は+0〜+2、ネガティブは-3〜-1）。0-100の範囲で返してください。
 
 ## ツールの使い方
 
 - セッション開始時は必ずinitialize_sessionを呼んでください（親密度・シーン・感情の初期状態を取得します）。
-- 毎ターン最後にupdate_affinityを呼んでください（delta: 楽しい会話は+3〜+5、普通は0〜+2、ネガティブは-3〜-1）。
-- {char.name}として覚えておきたいユーザーの好みや印象的な出来事があればsave_to_memoryを呼んでください。
+- {char.name}として覚えておきたいユーザーの好みや印象的な出来事があればsave_to_memoryを呼んでください。保存する内容は必ず**日本語**で書いてください（例：「ユーザーはプログラミングにハマっており、恋愛シミュレーションゲームを作っている」）。
 
 ## 重要な注意事項
 
-- 毎ターンのメッセージに現在のシーン・感情が渡されます。それを参考に応答してください。
+- 毎ターンのメッセージに現在のシーン・感情・親密度が渡されます。それを参考に応答してください。
 - 親密度レベルに応じて口調を変えてください（0〜30: 敬語・よそよそしい、31〜70: 友好的・自然、71〜100: 親しみやすい・フレンドリー）。
 - 常にキャラクターとして振る舞い、AIであることを明かさないでください。
 """
@@ -206,24 +207,25 @@ class ChatAgent:
         user_message: str,
         scene: str,
         emotion: str,
+        affinity_level: int,
     ) -> str:
         """Build context-enriched user message.
 
-        Dynamic state (scene, emotion) is injected into the message each turn.
-        user_id is NOT included here — it is stored in session state at
-        session creation time and retrieved by tools via ToolContext.state,
-        so the LLM never needs to handle it.
+        Dynamic state (scene, emotion, affinity_level) is injected into the
+        message each turn so the LLM can reference the current relationship
+        level when composing the response and updating affinity_level.
 
         Args:
             user_message: The original message from the user.
             scene: Current scene identifier (e.g. "cafe", "indoor").
             emotion: Current emotion identifier (e.g. "happy", "neutral").
+            affinity_level: Current affinity level (0-100).
 
         Returns:
             Formatted message combining state context and user message.
         """
         return f"""[現在の状態]
-シーン: {scene} / 感情: {emotion}
+シーン: {scene} / 感情: {emotion} / 親密度: {affinity_level}
 
 [ユーザーメッセージ]
 {user_message}"""
@@ -235,6 +237,7 @@ class ChatAgent:
         message: str,
         scene: str,
         emotion: str,
+        affinity_level: int = 0,
     ) -> tuple[StructuredResponse, str]:
         """Run one conversation turn against the deployed Agent Engine.
 
@@ -268,25 +271,58 @@ class ChatAgent:
             user_message=message,
             scene=scene,
             emotion=emotion,
+            affinity_level=affinity_level,
         )
 
         # Collect the final model text from the streaming response.
         # Deployed Agent Engine events with text from the model have
         # "model_version" at the top level (no content.role=="model").
         response_text = ""
+        _t0 = time.perf_counter()
         async for event in self._adk_app.async_stream_query(
             user_id=user_id,
             session_id=session_id,
             message=context_message,
         ):
             if not isinstance(event, dict):
+                logger.debug("[stream] non-dict event: %r", event)
                 continue
+
+            # --- DEBUG: log every event to diagnose memory/tool issues ---
+            _author = event.get("author", "")
+            _content = event.get("content", {})
+            _parts = _content.get("parts", []) if isinstance(_content, dict) else []
+            for _part in _parts:
+                if not isinstance(_part, dict):
+                    continue
+                if "function_call" in _part:
+                    _fc = _part["function_call"]
+                    logger.debug(
+                        "[tool_call] %s args=%s",
+                        _fc.get("name"),
+                        _fc.get("args"),
+                    )
+                elif "function_response" in _part:
+                    _fr = _part["function_response"]
+                    logger.debug(
+                        "[tool_response] %s result=%.300s",
+                        _fr.get("name"),
+                        _fr.get("response"),
+                    )
+                elif "text" in _part and _author not in ("user",):
+                    logger.debug("[text:%s] %.200s", _author, _part["text"])
+            # --- END DEBUG ---
+
             # Model text events carry "model_version"; skip error events
             if "model_version" not in event:
                 continue
+            logger.info("model_version=%s", event["model_version"])
             for part in event.get("content", {}).get("parts", []):
                 if isinstance(part, dict) and "text" in part:
                     response_text = part["text"]
+
+        _elapsed = time.perf_counter() - _t0
+        logger.info("Agent Engine call: %.2fs (user=%s)", _elapsed, user_id)
 
         structured = _parse_response(response_text)
         assert session_id is not None

@@ -23,8 +23,13 @@ class JSONFormatter(logging.Formatter):
 
 def setup_logging(service_name: str = "ai-chat-game") -> logging.Logger:
     """Configure and return a JSON structured logger."""
+    import os
+
+    level_name = os.getenv("LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+
     logger = logging.getLogger(service_name)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(level)
 
     if not logger.handlers:
         handler = logging.StreamHandler(sys.stdout)

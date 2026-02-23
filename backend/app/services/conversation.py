@@ -3,9 +3,12 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
+from google.cloud import firestore
+
 from app.models.conversation import (
     ConversationRequest,
     ConversationResponse,
+    Message,
     StructuredResponse,
 )
 from app.models.image import ImageGenerationRequest
@@ -15,6 +18,19 @@ if TYPE_CHECKING:
     from app.services.image import ImageGenerationService
 
 logger = logging.getLogger(__name__)
+
+# Emotion categories for image generation trigger.
+# Image is generated only when the category changes, not on every emotion shift.
+_EMOTION_CATEGORY: dict[str, str] = {
+    "happy":       "positive",
+    "excited":     "positive",
+    "neutral":     "neutral",
+    "thoughtful":  "neutral",
+    "sad":         "negative",
+    "angry":       "negative",
+    "surprised":   "expressive",
+    "embarrassed": "expressive",
+}
 
 _DEFAULT_CONTEXT: dict[str, Any] = {
     "emotion": "neutral",
@@ -50,6 +66,9 @@ class ConversationService:
         self.chat_agent = chat_agent
         self.image_service = image_service
         self._session_context: dict[str, dict[str, Any]] = {}
+        # session_id -> list of messages (user + agent alternating)
+        self._history: dict[str, list[Message]] = {}
+        self._db = firestore.Client()
 
     async def send_message(self, request: ConversationRequest) -> ConversationResponse:
         """Orchestrate one conversation turn.
@@ -73,6 +92,7 @@ class ConversationService:
             message=request.message,
             scene=prev["scene"],
             emotion=prev["emotion"],
+            affinity_level=prev["affinity_level"],
         )
 
         # --- 3. Image generation trigger (Task 6.2) ---
@@ -88,21 +108,67 @@ class ConversationService:
                 )
             )
 
-        # --- 4. Update in-memory context ---
+        # --- 4. Persist affinity to Firestore (replaces update_affinity tool) ---
+        self._update_affinity_firestore(request.user_id, structured_response.affinity_level)
+
+        # --- 5. Update in-memory context ---
         self._session_context[request.user_id] = {
             "emotion": structured_response.emotion.value,
             "scene": structured_response.scene.value,
             "affinity_level": structured_response.affinity_level,
         }
 
-        # --- 5. Build response ---
+        # --- 6. Append to history (per session_id) ---
+        now = datetime.now(timezone.utc).isoformat()
+        history = self._history.setdefault(session_id, [])
+        history.append(Message(role="user", dialogue=request.message, timestamp=now))
+        history.append(
+            Message(
+                role="agent",
+                dialogue=structured_response.dialogue,
+                narration=structured_response.narration,
+                timestamp=now,
+            )
+        )
+
+        # --- 6. Build response ---
         return ConversationResponse(
             session_id=session_id,
             dialogue=structured_response.dialogue,
             narration=structured_response.narration,
             image_path=image_path,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=now,
         )
+
+    def _update_affinity_firestore(self, user_id: str, affinity_level: int) -> None:
+        """Persist the latest affinity_level to Firestore.
+
+        Called after each turn instead of the update_affinity Agent Engine tool,
+        removing one LLM roundtrip per conversation turn.
+        """
+        try:
+            self._db.collection("user_states").document(user_id).set(
+                {"affinity_level": affinity_level}, merge=True
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to update affinity in Firestore: %s",
+                exc,
+                extra={"service": "ConversationService", "error_type": type(exc).__name__},
+            )
+
+    def get_history(self, session_id: str, limit: int = 50) -> list[Message]:
+        """Return message history for the given session, newest last.
+
+        Args:
+            session_id: Session identifier.
+            limit: Maximum number of messages to return (0 = all).
+
+        Returns:
+            List of Message objects, capped to `limit`.
+        """
+        messages = self._history.get(session_id, [])
+        return messages[-limit:] if limit > 0 else messages
 
     def _validate_image_trigger(
         self,
@@ -111,10 +177,14 @@ class ConversationService:
     ) -> bool:
         """Validate whether a state change justifies image generation.
 
-        Returns True when emotion changed, scene changed, or affinity
-        level changed by >= 10 points.
+        Returns True when:
+        - Emotion CATEGORY changed (e.g. neutral → positive, not happy → excited)
+        - Scene changed
+        - Affinity level changed by >= 10 points
         """
-        if response.emotion.value != prev["emotion"]:
+        prev_category = _EMOTION_CATEGORY.get(prev["emotion"], "neutral")
+        new_category = _EMOTION_CATEGORY.get(response.emotion.value, "neutral")
+        if new_category != prev_category:
             return True
         if response.scene.value != prev["scene"]:
             return True
