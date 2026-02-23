@@ -19,10 +19,7 @@ export interface ConversationResponse {
   session_id: string
   dialogue: string
   narration: string
-  emotion: Emotion
-  scene: Scene
-  image_url?: string
-  affinity_level: number
+  image_path?: string
   timestamp: string
 }
 
@@ -40,7 +37,6 @@ export interface ChatState {
   currentImageUrl: string
   isLoading: boolean
   isGeneratingImage: boolean
-  affinityLevel: number
   sessionId: string | null
 }
 

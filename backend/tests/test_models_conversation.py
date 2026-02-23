@@ -113,6 +113,7 @@ class TestConversationRequest:
             ConversationRequest(user_id="user_001")  # type: ignore[call-arg]
 
 
+
 # ---------------------------------------------------------------------------
 # ConversationResponse Tests
 # ---------------------------------------------------------------------------
@@ -123,7 +124,7 @@ class TestConversationResponse:
 
     def _make_response(self, **kwargs: object) -> ConversationResponse:
         """Create a valid ConversationResponse with defaults."""
-        defaults = {
+        defaults: dict[str, object] = {
             "session_id": "session_001",
             "dialogue": "こんにちは！",
             "narration": "彼女は笑顔で挨拶した。",
@@ -133,12 +134,13 @@ class TestConversationResponse:
         return ConversationResponse(**defaults)  # type: ignore[arg-type]
 
     def test_valid_response(self) -> None:
-        """Should create a valid response."""
+        """Should create a valid response with required fields."""
         resp = self._make_response()
         assert resp.session_id == "session_001"
         assert resp.dialogue == "こんにちは！"
         assert resp.narration == "彼女は笑顔で挨拶した。"
         assert resp.image_path is None
+        assert resp.timestamp == "2026-02-23T10:00:00"
 
     def test_image_path_when_generated(self) -> None:
         """Should accept image_path when image was generated."""
@@ -149,6 +151,21 @@ class TestConversationResponse:
         """All required fields must be present."""
         with pytest.raises(ValidationError):
             ConversationResponse(session_id="s1")  # type: ignore[call-arg]
+
+    def test_no_emotion_field(self) -> None:
+        """ConversationResponse must not expose emotion (backend-only concern)."""
+        resp = self._make_response()
+        assert not hasattr(resp, "emotion")
+
+    def test_no_scene_field(self) -> None:
+        """ConversationResponse must not expose scene (backend-only concern)."""
+        resp = self._make_response()
+        assert not hasattr(resp, "scene")
+
+    def test_no_affinity_level_field(self) -> None:
+        """ConversationResponse must not expose affinity_level (backend-only concern)."""
+        resp = self._make_response()
+        assert not hasattr(resp, "affinity_level")
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +182,7 @@ class TestStructuredResponse:
 
     def _make_structured(self, **kwargs: object) -> StructuredResponse:
         """Create a valid StructuredResponse with defaults."""
-        defaults = {
+        defaults: dict[str, object] = {
             "dialogue": "今日はいい天気ですね！",
             "narration": "彼女は窓の外を見た。",
             "emotion": Emotion.happy,

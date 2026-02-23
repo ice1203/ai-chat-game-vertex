@@ -150,9 +150,9 @@
   - APIエラー時のリトライ動作を確認
   - _Requirements: 1.3, 7.1, 7.2, 7.3_
 
-- [ ] 6. ConversationServiceの実装 (前提: 3, 4, 5)
+- [x] 6. ConversationServiceの実装 (前提: 3, 4, 5)
 
-- [ ] 6.1 会話ターンのオーケストレーション実装
+- [x] 6.1 会話ターンのオーケストレーション実装
   - メッセージ送信処理：エージェント呼び出し（async_stream_query） → StructuredResponse取得 → 画像生成判定 → レスポンス組み立て の順次処理
   - 現在の親密度・シーン・感情をエージェントのメッセージコンテキストに付加して送信する仕組みの実装
   - StructuredResponseの `affinity_level` フィールドを次ターンのContextとして引き継ぐ処理
@@ -160,7 +160,7 @@
   - ※ Memory Bank書き込み・Firestore更新はAgent Engine内のカスタムツール（initialize_session/update_affinity/save_to_memory）が担当。ConversationServiceは状態管理を行わない
   - _Requirements: 2.1, 2.2_
 
-- [ ] 6.2 画像生成トリガー判定とフォールバックの実装
+- [x] 6.2 画像生成トリガー判定とフォールバックの実装
   - needsImageUpdateフラグ + 感情カテゴリ変更・シーン変更・親密度閾値超過（±10）の複合検証ロジック（LLMの提案をバックエンドが最終判定）
   - 判定が真の場合に画像生成サービスを同期呼び出し
   - 画像生成失敗時に前回の画像URL（またはnull）を維持するフォールバック処理
