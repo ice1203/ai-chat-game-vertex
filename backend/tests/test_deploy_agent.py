@@ -152,7 +152,11 @@ class TestDeploy:
 
         deploy()
 
-        mock_create.assert_called_once_with(mock_adkapp.return_value, requirements=REQUIREMENTS)
+        mock_create.assert_called_once_with(
+            mock_adkapp.return_value,
+            requirements=REQUIREMENTS,
+            extra_packages=["app"],
+        )
 
     @patch("deploy_agent.vertexai.agent_engines.create")
     @patch("deploy_agent.AdkApp")
@@ -232,7 +236,9 @@ class TestDeployUpdate:
 
         deploy(update=True)
 
-        mock_existing.update.assert_called_once_with(mock_adkapp.return_value)
+        mock_existing.update.assert_called_once_with(
+            mock_adkapp.return_value, extra_packages=["app"]
+        )
 
     @patch("deploy_agent.vertexai.agent_engines.create")
     @patch("deploy_agent.vertexai.agent_engines.get")

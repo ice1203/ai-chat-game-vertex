@@ -4,6 +4,10 @@ These tools run inside the deployed Agent Engine and manage state via
 Cloud Firestore (affinity / session metadata) and Memory Bank (long-term
 memories).  Each function is a plain Python callable that can be passed
 directly to the ADK Agent or wrapped with FunctionTool.
+
+user_id は LLM 引数ではなく ToolContext.state から取得する。
+セッション作成時に state={"user_id": user_id} を渡すことで
+LLM が user_id を推測する必要をなくし、確実に正しい値を使う。
 """
 
 import logging
@@ -11,6 +15,7 @@ import random
 from datetime import datetime, timezone
 from typing import Optional
 
+from google.adk.tools import ToolContext
 from google.cloud import firestore
 
 logger = logging.getLogger(__name__)
@@ -22,7 +27,7 @@ _VALID_SCENES = ["indoor", "outdoor", "cafe", "park"]
 _INITIAL_EMOTIONS = ["neutral", "neutral", "neutral", "happy", "sad", "embarrassed", "excited", "angry"]
 
 
-def initialize_session(user_id: str) -> dict:
+def initialize_session(tool_context: ToolContext) -> dict:
     """Initialize session context at the start of a new conversation.
 
     Reads affinity and last session date from Firestore, calculates days
@@ -31,12 +36,13 @@ def initialize_session(user_id: str) -> dict:
     Call this at the beginning of every new conversation session.
 
     Args:
-        user_id: The unique identifier of the user.
+        tool_context: Injected by ADK. user_id is read from tool_context.state.
 
     Returns:
         A dict with keys: affinity_level (int), days_since_last_session
         (int or None), initial_scene (str), initial_emotion (str).
     """
+    user_id: str = tool_context.state.get("user_id", "unknown")
     db = firestore.Client()
     doc = db.collection("user_states").document(user_id).get()
 
@@ -64,7 +70,7 @@ def initialize_session(user_id: str) -> dict:
     }
 
 
-def update_affinity(user_id: str, delta: int) -> dict:
+def update_affinity(delta: int, tool_context: ToolContext) -> dict:
     """Update user affinity level in Firestore.
 
     Reads the current affinity, applies delta, clamps the result to the
@@ -72,12 +78,13 @@ def update_affinity(user_id: str, delta: int) -> dict:
     Call this after every conversation turn with the affinity change amount.
 
     Args:
-        user_id: The unique identifier of the user.
         delta: The change in affinity (positive to increase, negative to decrease).
+        tool_context: Injected by ADK. user_id is read from tool_context.state.
 
     Returns:
         A dict with key: affinity_level (int, clamped to 0-100).
     """
+    user_id: str = tool_context.state.get("user_id", "unknown")
     db = firestore.Client()
     doc = db.collection("user_states").document(user_id).get()
     current: int = doc.to_dict().get("affinity_level", 0) if doc.exists else 0
@@ -88,7 +95,7 @@ def update_affinity(user_id: str, delta: int) -> dict:
     return {"affinity_level": new_affinity}
 
 
-def save_to_memory(user_id: str, content: str) -> dict:
+def save_to_memory(content: str, tool_context: ToolContext) -> dict:
     """Save an important memory to Memory Bank.
 
     Use when the user reveals preferences, important events occur, or
@@ -96,8 +103,8 @@ def save_to_memory(user_id: str, content: str) -> dict:
     Do NOT call for every turn - only for genuinely important moments.
 
     Args:
-        user_id: The unique identifier of the user.
         content: The content to persist in Memory Bank.
+        tool_context: Injected by ADK. user_id is read from tool_context.state.
 
     Returns:
         A dict with keys: saved (bool), content (str).
@@ -107,5 +114,6 @@ def save_to_memory(user_id: str, content: str) -> dict:
         context.  In local / test environments this returns the placeholder
         result without making an external API call.
     """
+    user_id: str = tool_context.state.get("user_id", "unknown")
     logger.info("save_to_memory called for user_id=%s", user_id)
     return {"saved": True, "content": content}

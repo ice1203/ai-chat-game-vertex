@@ -1,8 +1,17 @@
-"""Tests for agent custom tools (Task 3.1.5)."""
+"""Tests for agent custom tools (Task 3.1.5).
+
+user_id は ToolContext.state から取得するため、
+テストでは _make_tool_context() ヘルパーでモックを作成して渡す。
+"""
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-import pytest
+
+def _make_tool_context(user_id: str = "user1") -> MagicMock:
+    """Build a minimal ToolContext mock with state["user_id"] set."""
+    ctx = MagicMock()
+    ctx.state = {"user_id": user_id}
+    return ctx
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +39,7 @@ class TestInitializeSession:
 
         mock_client.return_value = self._make_db_mock(doc_exists=False)
 
-        result = initialize_session("user1")
+        result = initialize_session(_make_tool_context())
 
         assert result["affinity_level"] == 0
 
@@ -41,7 +50,7 @@ class TestInitializeSession:
 
         mock_client.return_value = self._make_db_mock(doc_exists=False)
 
-        result = initialize_session("user1")
+        result = initialize_session(_make_tool_context())
 
         assert result["days_since_last_session"] is None
 
@@ -53,7 +62,7 @@ class TestInitializeSession:
         mock_db = self._make_db_mock(doc_exists=False)
         mock_client.return_value = mock_db
 
-        initialize_session("user1")
+        initialize_session(_make_tool_context())
 
         mock_db.collection.return_value.document.return_value.set.assert_called_once()
 
@@ -64,7 +73,7 @@ class TestInitializeSession:
 
         mock_client.return_value = self._make_db_mock(doc_exists=False)
 
-        result = initialize_session("user1")
+        result = initialize_session(_make_tool_context())
 
         assert result["initial_scene"] in ["indoor", "outdoor", "cafe", "park"]
 
@@ -75,7 +84,7 @@ class TestInitializeSession:
 
         mock_client.return_value = self._make_db_mock(doc_exists=False)
 
-        result = initialize_session("user1")
+        result = initialize_session(_make_tool_context())
 
         assert result["initial_emotion"] in _INITIAL_EMOTIONS
 
@@ -99,7 +108,7 @@ class TestInitializeSession:
             doc_data={"affinity_level": 50, "last_updated": None},
         )
 
-        result = initialize_session("user1")
+        result = initialize_session(_make_tool_context())
 
         assert result["affinity_level"] == 50
 
@@ -114,7 +123,7 @@ class TestInitializeSession:
             doc_data={"affinity_level": 30, "last_updated": last_updated},
         )
 
-        result = initialize_session("user1")
+        result = initialize_session(_make_tool_context())
 
         assert result["days_since_last_session"] == 3
 
@@ -128,9 +137,22 @@ class TestInitializeSession:
             doc_data={"affinity_level": 20, "last_updated": None},
         )
 
-        result = initialize_session("user1")
+        result = initialize_session(_make_tool_context())
 
         assert result["days_since_last_session"] is None
+
+    @patch("app.services.agent_tools.firestore.Client")
+    def test_uses_user_id_from_state(self, mock_client: MagicMock) -> None:
+        """initialize_session should use user_id from tool_context.state."""
+        from app.services.agent_tools import initialize_session
+
+        mock_db = self._make_db_mock(doc_exists=False)
+        mock_client.return_value = mock_db
+
+        initialize_session(_make_tool_context(user_id="specific_user"))
+
+        # Verify Firestore was called with the correct user_id
+        mock_db.collection.return_value.document.assert_called_with("specific_user")
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +179,7 @@ class TestUpdateAffinity:
 
         mock_client.return_value = self._make_db_mock(doc_exists=True, affinity=30)
 
-        result = update_affinity("user1", 10)
+        result = update_affinity(10, _make_tool_context())
 
         assert result["affinity_level"] == 40
 
@@ -168,7 +190,7 @@ class TestUpdateAffinity:
 
         mock_client.return_value = self._make_db_mock(doc_exists=True, affinity=50)
 
-        result = update_affinity("user1", -15)
+        result = update_affinity(-15, _make_tool_context())
 
         assert result["affinity_level"] == 35
 
@@ -179,7 +201,7 @@ class TestUpdateAffinity:
 
         mock_client.return_value = self._make_db_mock(doc_exists=True, affinity=95)
 
-        result = update_affinity("user1", 20)
+        result = update_affinity(20, _make_tool_context())
 
         assert result["affinity_level"] == 100
 
@@ -190,7 +212,7 @@ class TestUpdateAffinity:
 
         mock_client.return_value = self._make_db_mock(doc_exists=True, affinity=5)
 
-        result = update_affinity("user1", -20)
+        result = update_affinity(-20, _make_tool_context())
 
         assert result["affinity_level"] == 0
 
@@ -202,7 +224,7 @@ class TestUpdateAffinity:
         mock_db = self._make_db_mock(doc_exists=True, affinity=30)
         mock_client.return_value = mock_db
 
-        update_affinity("user1", 5)
+        update_affinity(5, _make_tool_context())
 
         mock_db.collection.return_value.document.return_value.set.assert_called_once()
 
@@ -217,7 +239,7 @@ class TestUpdateAffinity:
         mock_db.collection.return_value.document.return_value.get.return_value = mock_doc
         mock_client.return_value = mock_db
 
-        result = update_affinity("user1", 15)
+        result = update_affinity(15, _make_tool_context())
 
         assert result["affinity_level"] == 15
 
@@ -228,9 +250,21 @@ class TestUpdateAffinity:
 
         mock_client.return_value = self._make_db_mock(doc_exists=True, affinity=40)
 
-        result = update_affinity("user1", 0)
+        result = update_affinity(0, _make_tool_context())
 
         assert "affinity_level" in result
+
+    @patch("app.services.agent_tools.firestore.Client")
+    def test_uses_user_id_from_state(self, mock_client: MagicMock) -> None:
+        """update_affinity should use user_id from tool_context.state."""
+        from app.services.agent_tools import update_affinity
+
+        mock_db = self._make_db_mock(doc_exists=True, affinity=10)
+        mock_client.return_value = mock_db
+
+        update_affinity(5, _make_tool_context(user_id="specific_user"))
+
+        mock_db.collection.return_value.document.assert_called_with("specific_user")
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +279,7 @@ class TestSaveToMemory:
         """Should return saved=True."""
         from app.services.agent_tools import save_to_memory
 
-        result = save_to_memory("user1", "ユーザーは猫が好き")
+        result = save_to_memory("ユーザーは猫が好き", _make_tool_context())
 
         assert result["saved"] is True
 
@@ -254,7 +288,7 @@ class TestSaveToMemory:
         from app.services.agent_tools import save_to_memory
 
         content = "今日はとても楽しかった"
-        result = save_to_memory("user1", content)
+        result = save_to_memory(content, _make_tool_context())
 
         assert result["content"] == content
 
@@ -263,6 +297,6 @@ class TestSaveToMemory:
         from app.services.agent_tools import save_to_memory
 
         for content in ["short", "a" * 500, "日本語のコンテンツ"]:
-            result = save_to_memory("user1", content)
+            result = save_to_memory(content, _make_tool_context())
             assert result["saved"] is True
             assert result["content"] == content
