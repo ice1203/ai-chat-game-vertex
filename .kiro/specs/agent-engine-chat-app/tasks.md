@@ -61,7 +61,7 @@
   - 毎ターンのユーザーメッセージに現在の親密度・シーン・感情を付加するメッセージ構築ロジックの実装（動的状態はシステムプロンプトではなくメッセージに含める）
   - _Requirements: 5.5, 6.1_
 
-- [ ] 3.2 構造化出力とSession管理の設定
+- [x] 3.2 構造化出力とSession管理の設定
   - 構造化レスポンススキーマを指定したJSON強制出力の設定
   - VertexAiSessionServiceでSessionを明示的に作成し、session_idをADK Runnerに渡すSession管理の実装
   - Memory Bankからの関連記憶を毎ターン自動取得するPreloadMemoryToolと、LLMが過去の出来事を能動的に検索するLoadMemoryToolの設定
@@ -90,15 +90,20 @@
   - _Requirements: 4.1, 4.4_
 
 - [ ] 4.2 親密度管理とセッション初期状態のロジック実装
-  - セッション開始時にFirestore（user_statesコレクション）から親密度を1回だけ読み込みメモリにキャッシュ（デフォルト値: 0）
+  - セッション開始時にFirestore（user_statesコレクション）から親密度と `last_updated` を1回だけ読み込みメモリにキャッシュ（デフォルト値: affinity=0, last_updated=None）
+  - `last_updated` から `days_since_last_session` を算出してキャッシュ（初回はNone）
+  - セッション開始時に `last_updated = now` をFirestoreに書き込み（HTTPステートレスAPIのためセッション終了検知が困難なので開始時に記録）
   - ターン中はキャッシュから取得（Firestoreへの毎ターン読み込みを回避）
   - 親密度更新処理（0-100範囲制限、キャッシュ更新 + Firestoreへの保存）
+  - `_build_context_message` に `days_since` を渡し、1日以上の場合に「前回のやりとりからN日経過」を状態として注入（「久しぶり」会話の実現）
   - セッション開始時のシーン・感情のランダム生成（scene: 4種からランダム、emotion: neutral固定またはランダム）
   - _Requirements: 5.1, 5.3, 5.4_
 
 - [ ] 4.3 MemoryManager単体動作確認
   - Memory Bankへの書き込みが正常に動作することを確認
   - 親密度がFirestoreに正しく読み書きされることを確認
+  - セッション開始時に `last_updated` がFirestoreに書き込まれることを確認
+  - `days_since_last_session` が正しく算出され `_build_context_message` に渡されることを確認
   - セッション開始時にシーン・感情がランダム生成されることを確認
   - 親密度が0-100の範囲外になった場合にクランプされることを確認
   - _Requirements: 4.1, 4.4, 5.1, 5.3, 5.4_
