@@ -157,7 +157,11 @@ class TestConversationResponse:
 
 
 class TestStructuredResponse:
-    """Tests for StructuredResponse (LLM structured output schema)."""
+    """Tests for StructuredResponse (LLM structured output schema).
+
+    Task 3.1.5: affinityChange / isImportantEvent / eventSummary are removed.
+    affinity_level (tool-reported current value) is added instead.
+    """
 
     def _make_structured(self, **kwargs: object) -> StructuredResponse:
         """Create a valid StructuredResponse with defaults."""
@@ -166,10 +170,7 @@ class TestStructuredResponse:
             "narration": "彼女は窓の外を見た。",
             "emotion": Emotion.happy,
             "scene": Scene.indoor,
-            "needsImageUpdate": False,
-            "affinityChange": 5,
-            "isImportantEvent": False,
-            "eventSummary": "",
+            "affinity_level": 50,
         }
         defaults.update(kwargs)
         return StructuredResponse(**defaults)  # type: ignore[arg-type]
@@ -180,29 +181,27 @@ class TestStructuredResponse:
         assert resp.dialogue == "今日はいい天気ですね！"
         assert resp.emotion == Emotion.happy
         assert resp.scene == Scene.indoor
-        assert resp.needsImageUpdate is False
-        assert resp.affinityChange == 5
-        assert resp.isImportantEvent is False
-        assert resp.eventSummary == ""
+        assert resp.affinity_level == 50
 
-    def test_important_event_with_summary(self) -> None:
-        """isImportantEvent=True should work with eventSummary."""
-        resp = self._make_structured(
-            isImportantEvent=True,
-            eventSummary="ユーザーが好きな食べ物を話してくれた。",
-        )
-        assert resp.isImportantEvent is True
-        assert resp.eventSummary == "ユーザーが好きな食べ物を話してくれた。"
+    def test_affinity_level_at_zero(self) -> None:
+        """affinity_level=0 (minimum boundary) should be valid."""
+        resp = self._make_structured(affinity_level=0)
+        assert resp.affinity_level == 0
 
-    def test_needs_image_update_true(self) -> None:
-        """needsImageUpdate=True should be valid."""
-        resp = self._make_structured(needsImageUpdate=True)
-        assert resp.needsImageUpdate is True
+    def test_affinity_level_at_max(self) -> None:
+        """affinity_level=100 (maximum boundary) should be valid."""
+        resp = self._make_structured(affinity_level=100)
+        assert resp.affinity_level == 100
 
-    def test_affinity_change_negative(self) -> None:
-        """Negative affinityChange should be valid."""
-        resp = self._make_structured(affinityChange=-5)
-        assert resp.affinityChange == -5
+    def test_affinity_level_below_min_rejected(self) -> None:
+        """affinity_level below 0 should be rejected."""
+        with pytest.raises(ValidationError):
+            self._make_structured(affinity_level=-1)
+
+    def test_affinity_level_above_max_rejected(self) -> None:
+        """affinity_level above 100 should be rejected."""
+        with pytest.raises(ValidationError):
+            self._make_structured(affinity_level=101)
 
     def test_all_emotions_valid(self) -> None:
         """All emotion values should be accepted."""
@@ -221,8 +220,14 @@ class TestStructuredResponse:
         schema = StructuredResponse.model_json_schema()
         assert "properties" in schema
         assert "dialogue" in schema["properties"]
-        assert "needsImageUpdate" in schema["properties"]
-        assert "affinityChange" in schema["properties"]
-        assert "isImportantEvent" in schema["properties"]
+        assert "affinity_level" in schema["properties"]
+
+    def test_json_schema_no_removed_fields(self) -> None:
+        """Removed fields should not appear in JSON schema."""
+        schema = StructuredResponse.model_json_schema()
+        assert "affinityChange" not in schema["properties"]
+        assert "isImportantEvent" not in schema["properties"]
+        assert "eventSummary" not in schema["properties"]
+        assert "needsImageUpdate" not in schema["properties"]
 
 

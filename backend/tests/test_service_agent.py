@@ -1,6 +1,6 @@
-"""Tests for ChatAgent service (Task 3.1)."""
+"""Tests for ChatAgent service (Task 3.1) and build_agent (Task 3.1.5)."""
 import pytest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from app.models.image import CharacterConfig
 
@@ -383,3 +383,158 @@ class TestChatAgentInitialization:
             location="us-central1",
             agent_engine_id="engine-abc",
         )
+
+
+# ---------------------------------------------------------------------------
+# System Instructions - Tool Guidelines Tests (Task 3.1.5)
+# ---------------------------------------------------------------------------
+
+
+class TestSystemInstructionsToolGuidelines:
+    """Tests that system instructions include tool usage guidelines (Task 3.1.5)."""
+
+    def test_includes_initialize_session_guideline(
+        self, character_config: CharacterConfig
+    ) -> None:
+        """System instructions should guide the model to call initialize_session."""
+        from app.services.agent import ChatAgent
+
+        agent = ChatAgent("p", "l", "e", character_config)
+        instructions = agent._build_system_instructions()
+
+        assert "initialize_session" in instructions
+
+    def test_includes_update_affinity_guideline(
+        self, character_config: CharacterConfig
+    ) -> None:
+        """System instructions should guide the model to call update_affinity."""
+        from app.services.agent import ChatAgent
+
+        agent = ChatAgent("p", "l", "e", character_config)
+        instructions = agent._build_system_instructions()
+
+        assert "update_affinity" in instructions
+
+    def test_includes_save_to_memory_guideline(
+        self, character_config: CharacterConfig
+    ) -> None:
+        """System instructions should guide the model to call save_to_memory."""
+        from app.services.agent import ChatAgent
+
+        agent = ChatAgent("p", "l", "e", character_config)
+        instructions = agent._build_system_instructions()
+
+        assert "save_to_memory" in instructions
+
+    def test_includes_affinity_level_field(
+        self, character_config: CharacterConfig
+    ) -> None:
+        """System instructions should mention the affinity_level response field."""
+        from app.services.agent import ChatAgent
+
+        agent = ChatAgent("p", "l", "e", character_config)
+        instructions = agent._build_system_instructions()
+
+        assert "affinity_level" in instructions
+
+    def test_does_not_include_removed_fields(
+        self, character_config: CharacterConfig
+    ) -> None:
+        """System instructions must NOT mention fields removed in Task 3.1.5."""
+        from app.services.agent import ChatAgent
+
+        agent = ChatAgent("p", "l", "e", character_config)
+        instructions = agent._build_system_instructions()
+
+        assert "affinityChange" not in instructions
+        assert "isImportantEvent" not in instructions
+        assert "eventSummary" not in instructions
+
+
+# ---------------------------------------------------------------------------
+# build_agent Tests (Task 3.1.5)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildAgent:
+    """Tests for the module-level build_agent() exportable function."""
+
+    @patch("app.services.agent.Agent")
+    def test_returns_agent_instance(
+        self, mock_agent_cls: MagicMock, character_config: CharacterConfig
+    ) -> None:
+        """build_agent() should call Agent() and return its instance."""
+        from app.services.agent import build_agent
+
+        build_agent(character_config)
+
+        mock_agent_cls.assert_called_once()
+
+    @patch("app.services.agent.Agent")
+    def test_uses_correct_model(
+        self, mock_agent_cls: MagicMock, character_config: CharacterConfig
+    ) -> None:
+        """build_agent() should use the configured MODEL_ID."""
+        from app.services.agent import build_agent, MODEL_ID
+
+        build_agent(character_config)
+
+        assert mock_agent_cls.call_args.kwargs["model"] == MODEL_ID
+
+    @patch("app.services.agent.Agent")
+    def test_includes_preload_memory_tool(
+        self, mock_agent_cls: MagicMock, character_config: CharacterConfig
+    ) -> None:
+        """build_agent() should include PreloadMemoryTool in tools."""
+        from app.services.agent import build_agent
+        from google.adk.tools.preload_memory_tool import PreloadMemoryTool
+
+        build_agent(character_config)
+
+        tools = mock_agent_cls.call_args.kwargs["tools"]
+        assert any(isinstance(t, PreloadMemoryTool) for t in tools)
+
+    @patch("app.services.agent.Agent")
+    def test_extra_tools_appended(
+        self, mock_agent_cls: MagicMock, character_config: CharacterConfig
+    ) -> None:
+        """build_agent() should append extra_tools to the default tool list."""
+        from app.services.agent import build_agent
+
+        def dummy_tool(x: str) -> dict:
+            """Dummy tool."""
+            return {"x": x}
+
+        build_agent(character_config, extra_tools=[dummy_tool])
+
+        tools = mock_agent_cls.call_args.kwargs["tools"]
+        assert dummy_tool in tools
+
+    @patch("app.services.agent.Agent")
+    def test_no_extra_tools_by_default(
+        self, mock_agent_cls: MagicMock, character_config: CharacterConfig
+    ) -> None:
+        """build_agent() without extra_tools should only have default tools."""
+        from app.services.agent import build_agent
+        from google.adk.tools.preload_memory_tool import PreloadMemoryTool
+        from google.adk.tools.load_memory_tool import LoadMemoryTool
+
+        build_agent(character_config)
+
+        tools = mock_agent_cls.call_args.kwargs["tools"]
+        assert len(tools) == 2
+        assert any(isinstance(t, PreloadMemoryTool) for t in tools)
+        assert any(isinstance(t, LoadMemoryTool) for t in tools)
+
+    @patch("app.services.agent.Agent")
+    def test_has_json_response_config(
+        self, mock_agent_cls: MagicMock, character_config: CharacterConfig
+    ) -> None:
+        """build_agent() should configure JSON response schema."""
+        from app.services.agent import build_agent
+
+        build_agent(character_config)
+
+        config = mock_agent_cls.call_args.kwargs["generate_content_config"]
+        assert config.response_mime_type == "application/json"
+        assert config.response_schema is not None

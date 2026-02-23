@@ -49,13 +49,14 @@ class ConversationResponse(BaseModel):
 
 
 class StructuredResponse(BaseModel):
-    """LLM（ADK経由）が返す構造化JSONのスキーマ。バックエンド内部処理専用。フロントには返さない。"""
+    """LLM（ADK経由）が返す構造化JSONのスキーマ。バックエンド内部処理専用。フロントには返さない。
+
+    画像生成トリガーの判定はFastAPIバックエンドが emotion/scene/affinity_level の
+    変化のみに基づいて行うため、LLMからのヒントフィールド（needsImageUpdate）は含まない。
+    """
 
     dialogue: str
     narration: str
     emotion: Emotion
     scene: Scene
-    needsImageUpdate: bool
-    affinityChange: int
-    isImportantEvent: bool
-    eventSummary: str
+    affinity_level: int = Field(..., ge=0, le=100)

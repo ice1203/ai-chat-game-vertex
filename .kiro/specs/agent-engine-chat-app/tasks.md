@@ -19,7 +19,7 @@
   - sandbox スクリプトで Agent Engine + Memory Bank への接続を確認
   - _Requirements: 3.1, 4.1_
 
-- [ ] 0.3 エージェントのAgent Engineへのデプロイ (前提: 3.1.5完了後に実行)
+- [x] 0.3 エージェントのAgent Engineへのデプロイ (前提: 3.1.5完了後に実行)
   - `scripts/deploy_agent.py` の作成（FastAPI起動とは独立したスタンドアロンスクリプト）
   - `build_agent(extra_tools=[initialize_session, update_affinity, save_to_memory])` を呼び出してエージェント生成
   - `AdkApp(agent=agent)` でエージェントをラップ
@@ -46,7 +46,7 @@
   - バックエンドとの通信を担うAPIクライアントの基本骨格と環境変数設定
   - _Requirements: 9.1_
 
-- [ ] 2. バックエンドデータモデルの定義
+- [x] 2. バックエンドデータモデルの定義
 
 - [x] 2.1 会話・メッセージのデータモデル定義
   - 感情（happy/sad/neutral/surprised/thoughtful）、シーン（indoor/outdoor/cafe/park）、役割（user/agent）の列挙型定義
@@ -62,7 +62,7 @@
 
 - [ ] 3. (P) ADKエージェントの実装と動作確認 (前提: 0.2, 2.1)
 
-- [ ] 3.1 ADKエージェントの初期化とシステムインストラクション構築
+- [x] 3.1 ADKエージェントの初期化とシステムインストラクション構築
   - Memory Bankサービスの接続設定
   - モデル: gemini-3.1-pro-preview を使用
   - キャラクター設定・各フィールドの意味・応答ルールのみをシステムインストラクションに記述（JSON形式の説明は不要。response_schemaがAPI側で構造を強制するため、プロンプトへの重複記述は品質低下の原因となる）
@@ -70,7 +70,7 @@
   - 毎ターンのユーザーメッセージに現在の親密度・シーン・感情を付加するメッセージ構築ロジックの実装（動的状態はシステムプロンプトではなくメッセージに含める）
   - _Requirements: 5.5, 6.1_
 
-- [ ] 3.1.5 カスタムツールの実装 (前提: 3.1完了後)
+- [x] 3.1.5 カスタムツールの実装 (前提: 3.1完了後)
   - `backend/app/services/agent_tools.py` の作成
   - `initialize_session(user_id)` ツールの実装: Firestoreから親密度・last_updated読み込み → days_since算出 → last_updated=now書き込み → ランダムscene/emotion生成 → 全情報を返却
   - `update_affinity(user_id, delta)` ツールの実装: Firestoreから現在の親密度を読み込み → delta加算 → 0-100にクランプ → Firestoreに保存 → 新しい親密度を返却
