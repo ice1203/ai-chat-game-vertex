@@ -161,6 +161,8 @@ sequenceDiagram
     CS->>MM: init_session(user_id)
     MM->>MM: Firestoreから読み込み (user_states/{user_id})
     MM->>MM: affinity_levelをメモリにキャッシュ
+    MM->>MM: last_updatedからdays_since_last_sessionを算出しキャッシュ
+    MM->>MM: Firestoreにlast_updated=nowを書き込み（セッション開始時刻を記録）
 
     loop 会話ターン（ユーザーがメッセージを送るたびに繰り返し）
         U->>UI: メッセージ入力 & 送信
@@ -452,9 +454,12 @@ self.agent = adk.Agent(
 システムプロンプトは固定。親密度・シーン・感情は会話中に変化するため、**毎ターンのユーザーメッセージに付加**して渡す:
 
 ```python
-def _build_context_message(self, user_message: str, affinity_level: int, scene: str, emotion: str) -> str:
+def _build_context_message(self, user_message: str, affinity_level: int, scene: str, emotion: str, days_since: Optional[int] = None) -> str:
+    time_context = ""
+    if days_since is not None and days_since >= 1:
+        time_context = f"\n前回のやりとりから{days_since}日経過"
     return f"""[現在の状態]
-親密度: {affinity_level} / シーン: {scene} / 感情: {emotion}
+親密度: {affinity_level} / シーン: {scene} / 感情: {emotion}{time_context}
 
 [ユーザーメッセージ]
 {user_message}"""
@@ -501,7 +506,7 @@ def _build_context_message(self, user_message: str, affinity_level: int, scene: 
 
 **実装ノート**
 - 統合: 親密度はFirestore（google-cloud-firestore SDK、読み書き < 10ms）、重要イベントのみMemory Bank（APIコスト抑制）
-- セッション開始時: 親密度はFirestoreから読み込み、シーン・感情はランダム生成（scene: 4種からランダム、emotion: neutral固定またはランダム）
+- セッション開始時: 親密度と `last_updated` をFirestoreから読み込み、`days_since_last_session` を算出してキャッシュ後、`last_updated = now` をFirestoreに書き込む（セッション終了の検知が困難なためHTTPステートレスAPIの制約から開始時に記録）。シーン・感情はランダム生成（scene: 4種からランダム、emotion: neutral固定またはランダム）
 - 検証: 親密度範囲チェック(0-100)
 - リスク: Firestoreアクセス失敗時はデフォルト値（affinity=0）を使用、会話継続を優先
 - 設計判断: Memory Bankは自然言語の意味的記憶（好み、出来事）に限定し、本来の用途に沿った設計とする
@@ -767,15 +772,17 @@ interface ChatContextValue {
 
 **Cloud Firestore** (コレクション: `user_states`):
 - ドキュメントID: `{user_id}`
-- 役割: セッションをまたいで引き継ぐ親密度をクラウド上で管理
+- 役割: セッションをまたいで引き継ぐ親密度とセッション時刻をクラウド上で管理
 - 注: シーン・感情はセッション開始時にランダム生成するため保存しない
 - 構造:
 ```json
 {
   "affinity_level": "int(0-100)",
-  "last_updated": "ISO 8601"
+  "last_updated": "ISO 8601（セッション開始時に書き込み）"
 }
 ```
+- `last_updated` 書き込みタイミング: `init_session()` 実行時（セッション開始時）に `now` で上書き
+- `last_updated` 用途: 次回セッション開始時に読み込み、`days_since_last_session` を計算して「久しぶり」文脈をキャラクターに渡す
 
 **Characters Directory** (`data/characters/`):
 - ファイル名: `character.json`
