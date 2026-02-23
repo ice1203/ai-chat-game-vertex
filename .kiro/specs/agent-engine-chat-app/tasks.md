@@ -111,14 +111,14 @@
   - Gemini Image APIに適したプロンプト形式での出力
   - _Requirements: 7.1, 7.2_
 
-- [ ] 5.2 Gemini 3 Pro Image API連携と画像保存の実装
+- [x] 5.2 Gemini 3 Pro Image API連携と画像保存の実装
   - Vertex AI Gemini 3 Pro Image APIへの同期呼び出し
   - キャラクター外見の一貫性維持設定（appearance_promptをベースに使用）
   - 生成画像を感情・シーン・タイムスタンプを組み合わせた命名規則でローカル保存し、ファイルパスを返す
   - 生成失敗時のリトライ（1回）とエラーログ記録
   - _Requirements: 1.3, 1.7, 7.3, 8.3_
 
-- [ ] 5.3 ImageGenerationService単体動作確認
+- [x] 5.3 ImageGenerationService単体動作確認
   - 感情とシーンの組み合わせを指定してプロンプトが期待通りに構築されることを確認
   - 画像生成APIを呼び出して画像が生成され、データディレクトリに保存されることを確認
   - 生成ファイル名が命名規則（感情_シーン_タイムスタンプ.png）に従っていることを確認
