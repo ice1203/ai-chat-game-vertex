@@ -19,6 +19,15 @@
   - sandbox スクリプトで Agent Engine + Memory Bank への接続を確認
   - _Requirements: 3.1, 4.1_
 
+- [ ] 0.3 エージェントのAgent Engineへのデプロイ (前提: 3.1.5完了後に実行)
+  - `scripts/deploy_agent.py` の作成（FastAPI起動とは独立したスタンドアロンスクリプト）
+  - `build_agent(extra_tools=[initialize_session, update_affinity, save_to_memory])` を呼び出してエージェント生成
+  - `AdkApp(agent=agent)` でエージェントをラップ
+  - `vertexai.agent_engines.create(app, requirements=["google-cloud-aiplatform[agent_engines,adk]", "google-cloud-firestore"])` で初回デプロイ
+  - `existing.update(app)` による再デプロイ方法をスクリプト内にコメントとして記載
+  - デプロイ後に出力されるAgent Engine IDを .env に更新
+  - _Requirements: 3.1, 3.2, 4.1_
+
 - [x] 1. プロジェクト基盤のセットアップ
 
 - [x] 1.1 バックエンド環境の構築
@@ -61,52 +70,63 @@
   - 毎ターンのユーザーメッセージに現在の親密度・シーン・感情を付加するメッセージ構築ロジックの実装（動的状態はシステムプロンプトではなくメッセージに含める）
   - _Requirements: 5.5, 6.1_
 
-- [x] 3.2 構造化出力とSession管理の設定
-  - 構造化レスポンススキーマを指定したJSON強制出力の設定
-  - VertexAiSessionServiceでSessionを明示的に作成し、session_idをADK Runnerに渡すSession管理の実装
-  - Memory Bankからの関連記憶を毎ターン自動取得するPreloadMemoryToolと、LLMが過去の出来事を能動的に検索するLoadMemoryToolの設定
-  - after_agent_callbackは空実装(return Noneのみ。Memory Bank保存判定はConversationServiceが担う)
+- [ ] 3.1.5 カスタムツールの実装 (前提: 3.1完了後)
+  - `backend/app/services/agent_tools.py` の作成
+  - `initialize_session(user_id)` ツールの実装: Firestoreから親密度・last_updated読み込み → days_since算出 → last_updated=now書き込み → ランダムscene/emotion生成 → 全情報を返却
+  - `update_affinity(user_id, delta)` ツールの実装: Firestoreから現在の親密度を読み込み → delta加算 → 0-100にクランプ → Firestoreに保存 → 新しい親密度を返却
+  - `save_to_memory(user_id, content)` ツールの実装: VertexAiMemoryBankService経由でMemory Bankに書き込み → 保存結果を返却
+  - `build_agent()` 関数を `backend/app/services/agent.py` からエクスポート可能な形に分離（deploy.pyとFastAPIの両方から参照できるように）
+  - システムインストラクションに3つのツールの使い方ガイドラインを追記（「セッション開始時はinitialize_sessionを呼ぶ」「毎ターン最後にupdate_affinityを呼ぶ」「重要な出来事があればsave_to_memoryを呼ぶ」）
+  - StructuredResponseを更新: `affinityChange` / `isImportantEvent` / `eventSummary` を削除 → `affinity_level`（ツール呼び出し後の現在値）を追加
+  - _Requirements: 4.1, 4.4, 5.1, 5.3, 5.4_
+
+- [ ] 3.2 デプロイ済みAdkAppを使ったChatAgentのリファクタリング (前提: 0.3完了)
+  - `ChatAgent.initialize()` を `Runner`+`VertexAiSessionService` から `vertexai.Client.agent_engines.get()` ベースに変更
+  - `ChatAgent.run()` のセッション管理を `adk_app.async_create_session(user_id)` に変更（session["id"] でID取得）
+  - `runner.run_async(user_id, session_id, new_message)` → `adk_app.async_stream_query(user_id, session_id, message)` に変更
+  - レスポンスイベントの解析を ADK Event オブジェクト形式（`event.is_final_response()`）から Python dict 形式（`event["content"]["role"] == "model"` かつ text あり）に変更
+  - `_build_context_message()` の引数を str のまま維持（`types.Content` ラップ不要）
+  - after_agent_callbackは空実装のまま（ツールが副作用を担うためコールバック不要）
+  - `ChatAgent.run()` の引数から `affinity_level` を削除（initialize_sessionツールがセッション開始時に取得するため。2ターン目以降はStructuredResponseの`affinity_level`をContextに引き継ぐ）
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 4.2, 4.3, 6.1_
 
-- [ ] 3.3 JSONパースとエラーハンドリングの実装
-  - 構造化レスポンスのJSONパース処理
+- [ ] 3.3 JSONパースとエラーハンドリングの実装 (前提: 3.2完了後に見直し)
+  - `async_stream_query` の dict イベントから最終テキストを取得するロジックの確認・調整
+  - 構造化レスポンスのJSONパース処理（既存の `_parse_response()` ロジックを流用）
   - JSONパース失敗時のデフォルト値フォールバック（感情: neutral、シーン: indoor、画像更新フラグ: false、重要イベントフラグ: false）
   - エラーログ記録
   - _Requirements: 6.2, 8.3_
 
-- [ ] 3.4 ChatAgent単体動作確認
-  - エージェントを直接呼び出して構造化レスポンスが返却されることを確認
+- [ ] 3.4 ChatAgent単体動作確認（デプロイ済みエージェントを使用）
+  - デプロイ済みAgent Engineに対して直接呼び出し、構造化レスポンスが返却されることを確認
   - セリフ・感情・シーン・画像更新フラグ・親密度変化量・重要イベントフラグ・イベントサマリーの全フィールドが期待する型・値で返ること確認
-  - 複数ターンの会話で同一Sessionが維持されていることを確認
+  - 複数ターンの会話で同一Sessionが維持されていることを確認（async_list_sessions で確認）
   - 過去の出来事に言及する会話を送信し、LoadMemoryToolが能動的にMemory Bank検索を行うことを確認
   - JSONパース失敗時にデフォルト値でフォールバックされることを確認（不正な応答を模擬）
   - _Requirements: 3.1, 3.2, 6.1, 6.2_
 
-- [ ] 4. (P) MemoryManagerの実装と動作確認 (前提: 0.2, 2.1)
+- [ ] 4. カスタムツールの動作確認 (前提: 3.1.5完了, 0.3完了)
+  - ※ MemoryManager・親密度管理のロジックはタスク3.1.5のカスタムツール（agent_tools.py）に移行済み。このタスクはデプロイ後の動作確認。
 
-- [ ] 4.1 Memory Bank書き込み機能の実装
-  - 重要イベント(好み・出来事)をMemory Bankへ書き込む機能の実装
-  - Memory Bank検索はChatAgentのLoadMemoryToolが担うため、MemoryManagerでの検索実装は不要
-  - _Requirements: 4.1, 4.4_
-
-- [ ] 4.2 親密度管理とセッション初期状態のロジック実装
-  - セッション開始時にFirestore（user_statesコレクション）から親密度と `last_updated` を1回だけ読み込みメモリにキャッシュ（デフォルト値: affinity=0, last_updated=None）
-  - `last_updated` から `days_since_last_session` を算出してキャッシュ（初回はNone）
-  - セッション開始時に `last_updated = now` をFirestoreに書き込み（HTTPステートレスAPIのためセッション終了検知が困難なので開始時に記録）
-  - ターン中はキャッシュから取得（Firestoreへの毎ターン読み込みを回避）
-  - 親密度更新処理（0-100範囲制限、キャッシュ更新 + Firestoreへの保存）
-  - `_build_context_message` に `days_since` を渡し、1日以上の場合に「前回のやりとりからN日経過」を状態として注入（「久しぶり」会話の実現）
-  - セッション開始時のシーン・感情のランダム生成（scene: 4種からランダム、emotion: neutral固定またはランダム）
+- [ ] 4.1 initialize_sessionツールの動作確認
+  - デプロイ済みエージェントにメッセージを送信し、initialize_sessionが呼ばれることをトレースログで確認
+  - 初回セッション: affinity_level=0、days_since_last_session=None が返ることを確認
+  - 2回目以降: Firestoreから正しい親密度・経過日数が返ることを確認
+  - last_updatedがFirestoreに書き込まれることを確認
   - _Requirements: 5.1, 5.3, 5.4_
 
-- [ ] 4.3 MemoryManager単体動作確認
-  - Memory Bankへの書き込みが正常に動作することを確認
-  - 親密度がFirestoreに正しく読み書きされることを確認
-  - セッション開始時に `last_updated` がFirestoreに書き込まれることを確認
-  - `days_since_last_session` が正しく算出され `_build_context_message` に渡されることを確認
-  - セッション開始時にシーン・感情がランダム生成されることを確認
-  - 親密度が0-100の範囲外になった場合にクランプされることを確認
-  - _Requirements: 4.1, 4.4, 5.1, 5.3, 5.4_
+- [ ] 4.2 update_affinityツールの動作確認
+  - 会話ターン後にupdate_affinityが呼ばれることをトレースログで確認
+  - Firestoreの親密度が正しく更新されることを確認
+  - 0-100の範囲外への変化がクランプされることを確認
+  - StructuredResponseの `affinity_level` フィールドに更新後の値が反映されることを確認
+  - _Requirements: 5.1, 5.3_
+
+- [ ] 4.3 save_to_memoryツールの動作確認
+  - 重要な情報（好みや出来事）を含む会話をし、save_to_memoryが呼ばれることをトレースログで確認
+  - Memory Bankに記憶が保存されることを確認
+  - 次の新しいSessionで保存した記憶がPreloadMemoryToolで読み込まれることを確認
+  - _Requirements: 4.1, 4.4_
 
 - [ ] 5. (P) ImageGenerationServiceの実装と動作確認 (前提: 1.1, 2.2)
 
