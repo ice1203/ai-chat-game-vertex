@@ -53,58 +53,65 @@ graph TB
         API_Client[API Client]
     end
 
-    subgraph Backend_Presentation
-        Router[FastAPI Routers]
-    end
-
-    subgraph Backend_Application
+    subgraph FastAPI["FastAPI Backend (Local)"]
+        Router[Routers]
         ConvService[ConversationService]
-        ChatAgent[ChatAgent ADK]
-        MemoryMgr[MemoryManager]
+        ChatAgent[ChatAgent]
         ImageService[ImageGenerationService]
-    end
-
-    subgraph Backend_Domain
         Models[Pydantic Models]
     end
 
-    subgraph ADK_Framework
-        ADKRunner[ADK Runner]
-        VertexMBS[VertexAiMemoryBankService]
-        PreloadMemory[PreloadMemory Tool]
+    subgraph DeployScript["scripts/deploy_agent.py (初回のみ実行)"]
+        Deploy[AdkApp.create / update]
     end
 
-    subgraph External_Services
-        GeminiAPI[Gemini API]
-        MemoryBank[Memory Bank]
+    subgraph AgentEngine["Vertex AI Agent Engine (Cloud)"]
+        LLM[Gemini LLM]
+        Sessions[Sessions]
+        subgraph BuiltinTools["Built-in Tools"]
+            PreloadMemory[PreloadMemoryTool]
+            LoadMemory[LoadMemoryTool]
+        end
+        subgraph CustomTools["Custom Tools"]
+            InitSession[initialize_session]
+            UpdateAffinity[update_affinity]
+            SaveMemory[save_to_memory]
+        end
+    end
+
+    subgraph GCP_Storage["GCP Storage Services (Cloud)"]
+        MemoryBank[(Memory Bank)]
+        Firestore[(Cloud Firestore)]
         GeminiImage[Gemini 3 Pro Image]
     end
 
     UI --> ChatContext
     ChatContext --> API_Client
     API_Client --> Router
-
     Router --> ConvService
     ConvService --> ChatAgent
-    ConvService --> MemoryMgr
     ConvService --> ImageService
+    ChatAgent -- "async_stream_query()" --> AgentEngine
+    DeployScript -- "deploy" --> AgentEngine
 
-    ChatAgent --> ADKRunner
-    ChatAgent --> VertexMBS
-    ChatAgent --> PreloadMemory
-    MemoryMgr --> VertexMBS
-    ChatAgent --> Models
-    MemoryMgr --> Models
-    ImageService --> Models
+    LLM --> Sessions
+    LLM --> BuiltinTools
+    LLM --> CustomTools
 
-    ADKRunner --> GeminiAPI
-    VertexMBS --> MemoryBank
+    PreloadMemory --> MemoryBank
+    LoadMemory --> MemoryBank
+    SaveMemory --> MemoryBank
+    InitSession --> Firestore
+    UpdateAffinity --> Firestore
     ImageService --> GeminiImage
 ```
 
 **アーキテクチャの主要な設計決定**:
-- ADK統合によりSession/Memory Bank管理を大幅に簡素化、手動API呼び出し不要
-- PreloadMemory toolによる自動メモリ取得、会話ごとに関連記憶を自動ロード
+- **エージェントのAgent Engineデプロイ**: AdkAppでエージェントをラップしAgent Engineにデプロイ。エージェント処理はクラウド上で実行され、FastAPIはAPIクライアントとして機能する
+- **デプロイスクリプトの分離**: `scripts/deploy_agent.py` を独立したスクリプトとして分離。初回デプロイ・コード変更時のみ実行（FastAPI起動のたびに実行しない）
+- **Session/Memory Bank自動管理**: デプロイ済みAdkAppがSessionsとMemory Bankをクラウド上で自動管理。FastAPI側はsession_idの受け渡しのみ担当
+- **デプロイ済みAdkApp経由のクエリ**: `async_create_session()` + `async_stream_query()` でエージェントを呼び出し。レスポンスはPython dict形式のイベントストリーム
+- PreloadMemory toolによる自動メモリ取得、会話ごとに関連記憶を自動ロード（デプロイ済みエージェント内部で動作）
 - 依存性注入により、テスト時にモックサービスへの置き換えが容易
 - 同期的な画像生成フローにより、ジョブキューやステータス追跡の複雑性を排除
 - React Context APIによるフロントエンド状態管理で、外部ライブラリへの依存を最小化
@@ -117,7 +124,8 @@ graph TB
 | Frontend / CLI | Tailwind CSS | スタイリング | ユーティリティファーストCSS |
 | Frontend / CLI | shadcn/ui | UIコンポーネント | Tailwindベース、カスタムCSS最小化、デモ安定性優先 |
 | Backend / Services | FastAPI 0.104+ (Python 3.11+) | APIエンドポイント、依存性注入 | 非同期処理サポート |
-| Backend / Services | ADK (Agent Development Kit) | Agent Engine統合フレームワーク | VertexAiMemoryBankService、PreloadMemory、ADK Runner |
+| Backend / Services | ADK (Agent Development Kit) | Agent Engine統合フレームワーク | AdkApp（デプロイ）、async_stream_query（クエリ）、PreloadMemory/LoadMemoryTool |
+| Scripts / DevOps | vertexai.agent_engines (AdkApp) | エージェントのAgent Engineデプロイ | scripts/deploy_agent.py で管理。create()/update() を使用 |
 | Backend / Services | google-generativeai | Gemini API統合 | 構造化出力、画像生成 |
 | Backend / Services | Pydantic | データ検証、型安全性 | JSON schema生成 |
 | Data / Storage | File-based JSON | ローカルデータ管理 | `data/characters/`（設定）, `data/images/`（生成画像） |
@@ -150,53 +158,30 @@ sequenceDiagram
     participant UI as Frontend
     participant API as FastAPI Router
     participant CS as ConversationService
-    participant CA as ChatAgent
-    participant ADK as ADK Runner
-    participant MM as MemoryManager
-    participant MBS as VertexAiMemoryBankService
+    participant AE as Agent Engine (Cloud)
     participant IS as ImageGenerationService
-    participant GI as Gemini Image
-
-    Note over CS,MM: セッション開始時（1回のみ）
-    CS->>MM: init_session(user_id)
-    MM->>MM: Firestoreから読み込み (user_states/{user_id})
-    MM->>MM: affinity_levelをメモリにキャッシュ
-    MM->>MM: last_updatedからdays_since_last_sessionを算出しキャッシュ
-    MM->>MM: Firestoreにlast_updated=nowを書き込み（セッション開始時刻を記録）
+    participant GI as Gemini 3 Pro Image
 
     loop 会話ターン（ユーザーがメッセージを送るたびに繰り返し）
         U->>UI: メッセージ入力 & 送信
         UI->>API: POST /conversation/send
         API->>CS: send_message()
 
-        CS->>MM: get_affinity(user_id)
-        MM-->>CS: affinity_level（キャッシュから返す）
+        CS->>AE: async_stream_query(user_id, session_id, message)
 
-        CS->>CA: run(message, user_id, affinity_level, current_scene, current_emotion)
-        CA->>CA: ユーザーメッセージに現在の状態を付加\n[親密度/シーン/感情]
-        CA->>ADK: agent.run(message, session_id)
+        Note over AE: セッション開始時: initialize_session tool<br/>→ Firestoreから親密度・経過日数取得<br/>→ last_updated=now 書き込み<br/>→ ランダムscene/emotion生成
+        Note over AE: 毎ターン: PreloadMemoryTool<br/>→ Memory Bankから関連記憶を自動取得
+        Note over AE: LLM実行（Gemini）<br/>→ 構造化JSON生成
+        Note over AE: 毎ターン末: update_affinity tool<br/>→ Firestoreに親密度を更新
+        Note over AE: 重要な出来事: save_to_memory tool<br/>→ Memory Bankに記憶を保存
 
-        Note over ADK: PreloadMemory tool実行
-        ADK->>MBS: RetrieveMemories
-        MBS-->>ADK: memories
-
-        ADK->>ADK: LLM実行 (JSON schema)
-        ADK-->>CA: {dialogue, emotion, scene, needsImageUpdate, affinityChange}
-        CA-->>CS: structured_response
+        AE-->>CS: {dialogue, narration, emotion, scene,<br/>needsImageUpdate, affinity_level}
 
         alt needsImageUpdate == true
             CS->>IS: generate_image(emotion, scene)
             IS->>GI: Generate image (sync)
             GI-->>IS: image_url
             IS-->>CS: image_url
-        end
-
-        CS->>MM: update_affinity(user_id, delta)
-        MM->>MM: キャッシュを更新
-        MM->>MM: Firestoreに保存 (user_states/{user_id})（変化時のみ）
-
-        alt affinityChange >= 10 or 重要イベント
-            CS->>MBS: add_events_to_memory (async, 直前ターンのみ)
         end
 
         CS-->>API: response_data
@@ -206,10 +191,11 @@ sequenceDiagram
 ```
 
 **フロー設計の主要決定**:
-- ADK Runner + VertexAiSessionService によるSession管理: `session_service.create_session()` で明示的にセッションを作成し、`session_id` を Runner に渡す（AdkApp とは異なり、Runner では Session の明示的な管理が必要）
-- PreloadMemory tool: 毎ターン自動でMemory Bank検索、手動API呼び出し不要
+- Agent Engineがエージェント処理の全権を持つ: Sessions管理・Memory Bank読み書き・Firestore更新を全てAgent Engine内のツールが担当
+- FastAPIはパススルー: `async_stream_query()` を呼び、結果を返すのみ。状態管理はゼロ
+- 画像生成のみFastAPI側: 5-15秒かかる生成処理はAgent Engineのターン内に含めず、FastAPIが後処理として実行
+- PreloadMemory toolによる自動記憶取得: 毎ターン自動でMemory Bank検索、手動API呼び出し不要
 - 同期的画像生成(ブロッキング): UXは劣るが実装が大幅に簡素化(デモスコープに適切)
-- 閾値ベースMemory Bank更新: 親密度±10で自動保存、APIコール削減
 
 ### 画像生成トリガー判定フロー
 
@@ -246,29 +232,30 @@ flowchart TD
 
 ### Memory Bank更新フロー
 
+Agent Engine内のツール群が自律的に実行する。FastAPIは関与しない。
+
 ```mermaid
 flowchart TD
-    Start[会話ターン完了] --> UpdateState[Firestore更新\nuser_states/:user_id\n親密度]
+    Start[LLMが応答生成完了] --> CallUpdateAffinity[update_affinityツール呼び出し\nFirestoreに親密度を保存]
 
-    UpdateState --> CheckAffinity{親密度変化量\n±10以上?}
-    CheckAffinity -->|yes| Save[Memory Bank 非同期書き込み\neventSummary を保存]
-    CheckAffinity -->|no| CheckEvent{isImportantEvent\n== true?}
+    CallUpdateAffinity --> ReturnHint{should_save_memory?\n 親密度変化量 ±10以上}
+    ReturnHint -->|true| SaveMemory[save_to_memoryツール呼び出し\nMemory Bankに記憶を保存]
+    ReturnHint -->|false| LLMJudge{LLMが重要な\n出来事と判断?}
 
-    CheckEvent -->|yes| Save
-    CheckEvent -->|no| End[完了]
+    LLMJudge -->|yes| SaveMemory
+    LLMJudge -->|no| End[完了]
 
-    Save --> MemoryBank[(Memory Bank)]
+    SaveMemory --> MemoryBank[(Memory Bank)]
     MemoryBank --> Log[更新ログ記録]
     Log --> End
 ```
 
 **Memory Bank更新の主要決定**:
-- 親密度はFirestoreに毎ターン更新（低レイテンシ・クラウド永続化）
-- Memory Bankは重要イベント時のみ更新（APIコスト削減）
-- Memory Bank書き込みトリガーは2種類（OR条件）: ①親密度±10以上（バックエンドがプログラム的に検知）、②isImportantEvent=true（LLMが直接判定、バックエンドはそのまま信頼）
-- ※ needsImageUpdateとは異なり、isImportantEventはLLMの判断をそのまま使用する（バックエンドによる追加検証なし）
-- Memory Bankに保存する内容はLLMが生成した `eventSummary` をそのまま使用（別途パース不要）
-- 非同期処理により会話フローへの影響を最小化
+- 全ての書き込み処理がAgent Engine内のツールで完結（FastAPI側の処理ゼロ）
+- `update_affinity` は毎ターン必ず呼ばれ、Firestoreへの保存と `should_save_memory` ヒントの返却を担う
+- Memory Bank書き込みトリガーは2種類（OR条件）: ①`should_save_memory=true`（update_affinityが±10以上を検知）、②LLMが重要な出来事と自律的に判断
+- 保存内容はLLMが `save_to_memory(content=...)` の引数として直接生成（別途フィールドのパース不要）
+- Memory Bank書き込みはAgent Engine内で非同期実行し、会話フローへの影響を最小化
 
 
 ## 要件トレーサビリティ
@@ -390,21 +377,126 @@ class ConversationResponse(BaseModel):
 
 **依存関係**
 - Inbound: ConversationService — エージェント実行要求 (P0)
-- Outbound: VertexAiMemoryBankService — Memory Bank連携 (P0)
-- External: ADK Runner — エージェント実行とSession管理 (P0)
-- External: Gemini API — LLM応答生成 (P0)
+- Outbound: VertexAiMemoryBankService — Memory Bank書き込み（ConversationServiceが重要イベント時に呼び出し）(P1)
+- External: Deployed Agent Engine (AdkApp) — エージェント実行・Session管理・Memory Bank読み取り (P0)
 
 外部依存の詳細(`research.md`参照):
 - ADK: google-adk, 2026年1月22日リリース、隔週更新
+- vertexai SDK: google-cloud-aiplatform[agent_engines,adk] が必要
 - 認証: gcloud auth application-default login (ADC)
-- Memory Bank: PreloadMemoryTool で毎ターン自動取得 + LoadMemoryTool でLLMが能動的に検索。保存は ConversationService が重要イベント発生時のみ実行（after_agent_callback では保存しない）
-- 構造化出力: response_mime_type="application/json" + response_schema必須
+- Memory Bank読み取り: デプロイ済みエージェント内のPreloadMemoryTool/LoadMemoryToolが自動処理
+- Memory Bank書き込み: ConversationServiceがVertexAiMemoryBankService経由で重要イベント時のみ実行
+- 構造化出力: response_mime_type="application/json" + response_schema必須（AdkApp側で設定）
 
 **コントラクト**: Agent [x] / Service [x]
 
-##### ADK統合パターン (重要)
+##### カスタムツール定義 (backend/app/services/agent_tools.py)
 
-LLMからの構造化出力スキーマ:
+エージェントが持つ3つのカスタムツール。デプロイ時にエージェントに組み込まれ、**Agent Engine上で実行される**。
+
+```python
+# backend/app/services/agent_tools.py
+import random
+from datetime import datetime, timezone
+from google.adk.tools import tool
+from google.cloud import firestore
+
+@tool
+def initialize_session(user_id: str) -> dict:
+    """Initialize session context at the start of a new conversation.
+
+    Reads affinity and last session date from Firestore, calculates days
+    since last session, writes current timestamp, and generates random
+    scene/emotion for the session.
+    Call this at the beginning of every new conversation session.
+    """
+    db = firestore.Client()
+    doc = db.collection("user_states").document(user_id).get()
+    affinity_level = 0
+    days_since = None
+    if doc.exists:
+        data = doc.to_dict()
+        affinity_level = data.get("affinity_level", 0)
+        last_updated = data.get("last_updated")
+        if last_updated:
+            days_since = (datetime.now(timezone.utc) - last_updated).days
+    db.collection("user_states").document(user_id).set(
+        {"last_updated": datetime.now(timezone.utc)}, merge=True
+    )
+    scene = random.choice(["indoor", "outdoor", "cafe", "park"])
+    return {
+        "affinity_level": affinity_level,
+        "days_since_last_session": days_since,
+        "initial_scene": scene,
+        "initial_emotion": "neutral",
+    }
+
+@tool
+def update_affinity(user_id: str, delta: int) -> dict:
+    """Update user affinity level in Firestore.
+
+    Apply delta to current affinity, clamp to 0-100 range, and persist.
+    Call this after every conversation turn with the affinity change amount.
+    """
+    db = firestore.Client()
+    doc = db.collection("user_states").document(user_id).get()
+    current = doc.to_dict().get("affinity_level", 0) if doc.exists else 0
+    new_affinity = max(0, min(100, current + delta))
+    db.collection("user_states").document(user_id).set(
+        {"affinity_level": new_affinity}, merge=True
+    )
+    return {"affinity_level": new_affinity}
+
+@tool
+def save_to_memory(user_id: str, content: str) -> dict:
+    """Save an important memory to Memory Bank.
+
+    Use when the user reveals preferences, important events occur, or
+    information worth remembering across sessions is shared.
+    Do NOT call for every turn - only for genuinely important moments.
+    """
+    # VertexAiMemoryBankService 経由でMemory Bankに書き込む
+    # (deploy_agent.py で memory_service と agent_engine_id を渡す)
+    return {"saved": True, "content": content}
+```
+
+##### デプロイスクリプト (scripts/deploy_agent.py)
+
+エージェントをAgent Engineにデプロイする**独立したスクリプト**。FastAPIの起動とは切り離し、初回デプロイ・エージェントコード変更時のみ実行する。
+
+```python
+# scripts/deploy_agent.py
+import vertexai
+from vertexai.agent_engines import AdkApp
+from app.services.agent import build_agent       # Agent定義関数
+from app.services.agent_tools import (           # カスタムツール
+    initialize_session, update_affinity, save_to_memory
+)
+
+vertexai.init(project=PROJECT_ID, location=LOCATION)
+
+agent = build_agent(
+    character_config=character_config,
+    extra_tools=[initialize_session, update_affinity, save_to_memory],
+)
+
+app = AdkApp(agent=agent)
+
+# 初回デプロイ
+deployed = vertexai.agent_engines.create(
+    app,
+    requirements=["google-cloud-aiplatform[agent_engines,adk]", "google-cloud-firestore"],
+)
+print(f"Deployed Agent Engine ID: {deployed.resource_name.split('/')[-1]}")
+
+# 再デプロイ（コード変更時）
+# existing = vertexai.agent_engines.get(AGENT_ENGINE_ID)
+# existing.update(app)
+```
+
+##### ADK統合パターン - デプロイ済みAdkApp経由のクエリ (重要)
+
+**LLMからの構造化出力スキーマ（ツール化により簡略化）**:
 
 ```python
 class StructuredResponse(BaseModel):
@@ -412,44 +504,69 @@ class StructuredResponse(BaseModel):
     narration: str
     emotion: str             # happy|sad|neutral|surprised|thoughtful
     scene: str               # indoor|outdoor|cafe|park
-    needsImageUpdate: bool   # 画像更新ヒント（LLMが提案 → バックエンドが感情/シーン/親密度を追加検証して最終判定）
-    affinityChange: int      # 親密度変化量（バックエンドが±10閾値でプログラム的に判定）
-    isImportantEvent: bool   # 重要な出来事か（LLMが直接判定 → バックエンドはそのまま信頼して保存）
-    eventSummary: str        # Memory Bankに保存する内容（isImportantEvent=trueの場合にLLMが生成）
+    needsImageUpdate: bool   # 画像更新ヒント（LLMが提案 → FastAPIが最終判定）
+    affinity_level: int      # update_affinityツール呼び出し後の現在の親密度（0-100）
+
+# 削除されたフィールド（ツールに移行）:
+# affinityChange     → update_affinity(user_id, delta) ツールが直接Firestoreに書き込む
+# isImportantEvent   → LLMがsave_to_memory(user_id, content) ツールを直接呼ぶ
+# eventSummary       → save_to_memoryのcontents引数として渡す
 ```
 
-Memory Bank 保存方針: **重要イベント発生時のみ ConversationService が明示的に保存**する。コールバックでは保存しない。
+**Memory Bank / 親密度の保存方針**: **Agent Engine内のツールが直接実行**する。ConversationService(FastAPI)では保存処理を行わない。
 
-理由:
-- `after_agent_callback` は毎ターン発火するため、全ターンで保存すると不要な API コストが発生する
-- 「重要かどうか」の判定は構造化出力（`affinityChange` 等）を必要とするため、JSON をパース済みの ConversationService が担うべき
-- Sessions がすでに短期記憶を管理しているため、全ターンを Memory Bank に入れる必要はない
+ChatAgent.initialize() / run() の変更点:
 
 ```python
-async def _generate_memories_callback(callback_context: CallbackContext) -> None:
-    # Memory Bank 保存は ConversationService に委譲するため、ここでは何もしない
-    return None
+import vertexai
+
+class ChatAgent:
+    def initialize(self) -> None:
+        """デプロイ済みAdkAppのインスタンスを取得する。"""
+        client = vertexai.Client(project=self.project_id, location=self.location)
+        # Agent Engineの完全リソース名で取得
+        resource_name = f"projects/{self.project_id}/locations/{self.location}/reasoningEngines/{self.agent_engine_id}"
+        self._deployed_app = client.agent_engines.get(name=resource_name)
+
+    async def run(self, user_message, user_id, affinity_level, scene, emotion,
+                  session_id=None) -> tuple[StructuredResponse, str]:
+        # セッション作成（初回のみ）
+        if session_id is None:
+            session = await self._deployed_app.async_create_session(user_id=user_id)
+            session_id = session["id"]
+
+        # コンテキスト付きメッセージ構築（変更なし）
+        context_message = self._build_context_message(
+            user_message, affinity_level, scene, emotion)
+
+        # デプロイ済みエージェントへのクエリ
+        final_response_text = None
+        async for event in self._deployed_app.async_stream_query(
+            user_id=user_id,
+            session_id=session_id,
+            message=context_message,
+        ):
+            # イベントはPython dict形式（Runner.run_asyncのEventオブジェクトとは異なる）
+            # 最後のmodelロールのtextパートを最終応答とする
+            content = event.get("content", {})
+            if content.get("role") == "model":
+                parts = content.get("parts", [])
+                for part in parts:
+                    if "text" in part:
+                        final_response_text = part["text"]
+
+        return self._parse_response(final_response_text), session_id
 ```
 
-Memory Bank 保存は ConversationService.send_message() 内で判定・実行する（Memory Bank更新フロー参照）。
+| 変更点 | 旧 (Runner) | 新 (Deployed AdkApp) |
+|--------|------------|---------------------|
+| 初期化 | `Runner(agent, session_service, memory_service)` | `client.agent_engines.get(resource_name)` |
+| セッション作成 | `session_service.create_session(app_name, user_id)` | `adk_app.async_create_session(user_id)` |
+| エージェント実行 | `runner.run_async(user_id, session_id, new_message)` | `adk_app.async_stream_query(user_id, session_id, message)` |
+| イベント判定 | `event.is_final_response()` (ADK Event オブジェクト) | `event["content"]["role"] == "model"` かつ text あり (dict) |
+| メッセージ型 | `types.Content(role="user", parts=[...])` | 文字列 (str) |
 
-ADKエージェント初期化 (各サービスの接続と structured output の設定):
-
-```python
-self.agent = adk.Agent(
-    model="gemini-3.1-pro-preview",
-    instruction=self._build_system_instructions(),    # 固定：キャラ設定・各フィールドの意味のみ（JSON形式の説明は不要）
-    tools=[PreloadMemoryTool(), LoadMemoryTool()],     # PreloadMemory: 毎ターン自動ロード、LoadMemory: LLMが必要時に能動的検索
-    after_agent_callback=_generate_memories_callback,  # 何もしない（保存判定はConversationServiceが担う）
-    generate_content_config=types.GenerateContentConfig(  # generation_config ではなく generate_content_config
-        response_mime_type="application/json",
-        response_schema=StructuredResponse.model_json_schema()  # Pydanticモデルはdict変換が必要
-    )
-)
-# 注意: response_schema をシステムプロンプトに重複記述すると品質低下の原因となる（公式ドキュメント）
-```
-
-**動的状態の注入パターン（重要）**:
+**動的状態の注入パターン（変更なし）**:
 
 システムプロンプトは固定。親密度・シーン・感情は会話中に変化するため、**毎ターンのユーザーメッセージに付加**して渡す:
 
@@ -467,16 +584,16 @@ def _build_context_message(self, user_message: str, affinity_level: int, scene: 
 
 | 何に書く | 内容 | タイミング |
 |---------|------|---------|
-| システムプロンプト | キャラ設定・応答ルール・JSONフォーマット | 固定（変更なし） |
-| ユーザーメッセージ | 現在の親密度・シーン・感情 | 毎ターン付加 |
-| ADK Sessions | 会話履歴 | 自動管理 |
+| システムプロンプト | キャラ設定・応答ルール | 固定（変更なし） |
+| ユーザーメッセージ | 現在の親密度・シーン・感情 | 毎ターン付加（変更なし） |
+| ADK Sessions | 会話履歴 | デプロイ済みエージェントが自動管理 |
 
 **実装ノート**
-- 統合: VertexAiMemoryBankService + PreloadMemoryTool(自動) + LoadMemoryTool(能動的検索)でMemory Bank連携、ADK Runnerが自動Session管理
-- 動的状態: システムプロンプトに動的値を含めない。毎ターンのメッセージに現在の状態を付加する
-- 検証: JSON schema complexity check(5-7 fields max)、enum値の妥当性確認
-- リスク: JSON parse失敗時はデフォルト値使用(要件6.2)、API障害時はADK Runnerが自動リトライ
-- Callback: `after_agent_callback` はターンごとに発火（セッション終了時ではない）。Memory Bank 保存の責務は持たせず `return None` のみ。保存判定は ConversationService が構造化出力（affinityChange 等）を見て行う
+- 統合: デプロイ済みAdkApp経由で全てのクエリを実行。Memory Bank読み取りはエージェント内部のPreloadMemoryTool/LoadMemoryToolが担当
+- 動的状態: システムプロンプトに動的値を含めない。毎ターンのメッセージに現在の状態を付加する（変更なし）
+- イベント解析: `async_stream_query` はPython dict形式のイベントストリームを返す。`content.role == "model"` かつ `text` を持つ最後のイベントが最終応答
+- リスク: JSON parse失敗時はデフォルト値使用(要件6.2)、API障害時は503を返す
+- スクリプト分離: エージェントコードが変更された場合は `scripts/deploy_agent.py` を再実行してAgent Engineを更新する
 
 #### MemoryManager
 
