@@ -16,7 +16,6 @@ export const initialState: ChatState = {
   currentImageUrl: '',
   isLoading: false,
   isGeneratingImage: false,
-  affinityLevel: 0,
   sessionId: null,
 }
 
@@ -51,8 +50,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
             timestamp: action.response.timestamp,
           },
         ],
-        currentImageUrl: action.response.image_url ?? state.currentImageUrl,
-        affinityLevel: action.response.affinity_level,
+        currentImageUrl: action.response.image_path ?? state.currentImageUrl,
         sessionId: action.response.session_id,
       }
 
