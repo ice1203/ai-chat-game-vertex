@@ -102,34 +102,21 @@ async def save_to_memory(content: str, tool_context: ToolContext) -> dict:
     information worth remembering across sessions is shared.
     Do NOT call for every turn - only for genuinely important moments.
 
+    Uses tool_context.add_events_to_memory so that app_name / user_id / session_id
+    are derived from the session context — exactly matching what load_memory and
+    PreloadMemoryTool use when reading.
+
     Args:
         content: The content to persist in Memory Bank.
-        tool_context: Injected by ADK. user_id is read from tool_context.state.
+        tool_context: Injected by ADK. Memory scope is read from the session context.
 
     Returns:
         A dict with keys: saved (bool), content (str).
     """
-    import os
-
     from google.adk.events import Event
-    from google.adk.memory import VertexAiMemoryBankService
     from google.genai import types as genai_types
 
     user_id: str = tool_context.state.get("user_id", "unknown")
-
-    project = os.getenv("GOOGLE_CLOUD_PROJECT", "")
-    location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
-    agent_engine_id = os.getenv("AGENT_ENGINE_ID", "")
-
-    if not agent_engine_id:
-        logger.warning("AGENT_ENGINE_ID not set — skipping Memory Bank write")
-        return {"saved": False, "error": "AGENT_ENGINE_ID not configured"}
-
-    memory_service = VertexAiMemoryBankService(
-        project=project,
-        location=location,
-        agent_engine_id=agent_engine_id,
-    )
 
     event = Event(
         author="user",
@@ -139,11 +126,7 @@ async def save_to_memory(content: str, tool_context: ToolContext) -> dict:
         ),
     )
 
-    await memory_service.add_events_to_memory(
-        app_name="character_agent",
-        user_id=user_id,
-        events=[event],
-    )
+    await tool_context.add_events_to_memory(events=[event])
 
     logger.info("Memory saved for user_id=%s: %.80s", user_id, content)
     return {"saved": True, "content": content}

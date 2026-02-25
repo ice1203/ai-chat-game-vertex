@@ -114,8 +114,10 @@ async def debug_memory(user_id: str, q: str = "ユーザー") -> dict:
     )
 
     try:
+        # app_name must match what AdkApp uses internally:
+        # AdkApp.set_up() sets app_name = GOOGLE_CLOUD_AGENT_ENGINE_ID = agent_engine_id.
         result = await memory_service.search_memory(
-            app_name="character_agent",
+            app_name=agent_engine_id,
             user_id=user_id,
             query=q,
         )

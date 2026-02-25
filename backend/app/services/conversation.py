@@ -1,5 +1,4 @@
 """ConversationService: orchestrates one conversation turn (Task 6.1, 6.2)."""
-import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -11,13 +10,14 @@ from app.models.conversation import (
     Message,
     StructuredResponse,
 )
+from app.core.logging import setup_logging
 from app.models.image import ImageGenerationRequest
 
 if TYPE_CHECKING:
     from app.services.agent import ChatAgent
     from app.services.image import ImageGenerationService
 
-logger = logging.getLogger(__name__)
+logger = setup_logging("conversation")
 
 # Emotion categories for image generation trigger.
 # Image is generated only when the category changes, not on every emotion shift.
@@ -93,6 +93,13 @@ class ConversationService:
             scene=prev["scene"],
             emotion=prev["emotion"],
             affinity_level=prev["affinity_level"],
+        )
+
+        logger.info(
+            "turn: emotion=%s scene=%s affinity=%d",
+            structured_response.emotion.value,
+            structured_response.scene.value,
+            structured_response.affinity_level,
         )
 
         # --- 3. Image generation trigger (Task 6.2) ---
