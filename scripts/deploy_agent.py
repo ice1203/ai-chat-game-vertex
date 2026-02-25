@@ -79,6 +79,10 @@ def deploy(update: bool = False) -> None:
         existing.update(
             agent_engine=app,
             extra_packages=["app"],
+            # NOTE: GOOGLE_CLOUD_AGENT_ENGINE_ID is reserved and auto-injected
+            # by Agent Engine runtime — do NOT pass it here.
+            # It is used by AdkApp.set_up() to configure VertexAiMemoryBankService
+            # and derive session app_name automatically.
             env_vars={"AGENT_ENGINE_ID": settings.agent_engine_id},
         )
         print(f"Updated Agent Engine: {settings.agent_engine_id}")

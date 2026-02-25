@@ -18,3 +18,5 @@ class CharacterConfig(BaseModel):
     name: str
     personality: str
     appearance_prompt: str
+    emotion_prompts: dict[str, str] = Field(default_factory=dict)
+    affinity_prompts: dict[str, str] = Field(default_factory=dict)

@@ -1,6 +1,6 @@
 """Image generation service."""
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -30,6 +30,7 @@ SCENE_PROMPTS: dict[Scene, str] = {
 }
 
 REFERENCE_IMAGE_FILENAME = "reference.png"
+REFERENCE_MAX_AGE_DAYS = 30
 
 
 def _affinity_prompt(affinity_level: int) -> str:
@@ -63,8 +64,17 @@ class ImageGenerationService:
         self._reference_image_path = self.images_dir / REFERENCE_IMAGE_FILENAME
         self._reference_image_bytes: Optional[bytes] = None
         if self._reference_image_path.exists():
-            self._reference_image_bytes = self._reference_image_path.read_bytes()
-            logger.debug("Loaded reference image from %s", self._reference_image_path)
+            age = datetime.now() - datetime.fromtimestamp(
+                self._reference_image_path.stat().st_mtime
+            )
+            if age < timedelta(days=REFERENCE_MAX_AGE_DAYS):
+                self._reference_image_bytes = self._reference_image_path.read_bytes()
+                logger.debug("Loaded reference image from %s", self._reference_image_path)
+            else:
+                logger.info(
+                    "Reference image expired (%d days old), will regenerate on next call",
+                    age.days,
+                )
 
     def build_prompt(self, request: ImageGenerationRequest, has_reference: bool = False) -> str:
         """Build a Gemini Image API prompt from request and character config.
@@ -79,9 +89,12 @@ class ImageGenerationService:
         Returns:
             Prompt string to send to the image generation API.
         """
-        emotion_desc = EMOTION_PROMPTS[request.emotion]
+        emotion_desc = self.character_config.emotion_prompts.get(
+            request.emotion.value
+        ) or EMOTION_PROMPTS[request.emotion]
         scene_desc = SCENE_PROMPTS[request.scene]
-        affinity_desc = _affinity_prompt(request.affinity_level)
+        affinity_key = "high" if request.affinity_level > 70 else "mid" if request.affinity_level > 30 else "low"
+        affinity_desc = self.character_config.affinity_prompts.get(affinity_key) or _affinity_prompt(request.affinity_level)
         if has_reference:
             return (
                 "Keep the character's appearance, hairstyle, eye color, and clothing "
